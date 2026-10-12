@@ -171,9 +171,10 @@ uv run nekopal serve        # 先起服务
 
 ```jsonc
 {
-  "plugins": ["/Users/yuwenyan/Documents/NekoPal/integrations/opencode-plugin"]
+  "plugins": ["~/Documents/NekoPal/integrations/opencode-plugin"]
 }
 ```
+（路径按你 clone 的实际位置改）
 
 它监听 `session.idle`（会话完成），取回最后一条足够长的助手消息推给跟随窗。
 环境变量 `NEKOPAL_DEBUG=1` 可打印每个事件类型用于排查。

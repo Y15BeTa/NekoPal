@@ -29,7 +29,7 @@ uv run nekopal serve            # 默认 http://127.0.0.1:8787
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["/Users/yuwenyan/Documents/NekoPal/integrations/opencode-plugin"]
+  "plugins": ["~/Documents/NekoPal/integrations/opencode-plugin"]
 }
 ```
 
