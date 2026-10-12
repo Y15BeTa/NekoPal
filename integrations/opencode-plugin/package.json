@@ -1,0 +1,11 @@
+{
+  "name": "nekopal-opencode-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "让 opencode 每回答完一次，自动把整条回答推给 NekoPal 朗读",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  }
+}

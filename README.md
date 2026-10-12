@@ -91,6 +91,42 @@ curl -X POST http://127.0.0.1:8787/api/read \
 
 ---
 
+## 与其他工具集成
+
+| 方式 | 适用场景 | 状态 |
+| --- | --- | --- |
+| 跟读窗粘贴 | 手动，最直接 | ✅ |
+| `POST /api/read` | 任何程序推送整块文本 | ✅ |
+| `scripts/push.py` | 命令行 / 编辑器插件 / 定时任务 | ✅ |
+| **opencode 插件** | opencode 回答完**自动**朗读 | ✅ 已提供 |
+
+### opencode：回答完自动朗读
+
+```bash
+uv run nekopal serve        # 先起服务
+```
+
+在 `~/.config/opencode/opencode.jsonc` 里加载插件，然后重启 opencode：
+
+```jsonc
+{
+  "plugins": ["/Users/yuwenyan/Documents/NekoPal/integrations/opencode-plugin"]
+}
+```
+
+它监听 `session.idle`（会话完成），取回最后一条足够长的助手消息推给跟随窗。
+环境变量 `NEKOPAL_DEBUG=1` 可打印每个事件类型用于排查。
+详见 [`integrations/opencode-plugin/README.md`](integrations/opencode-plugin/README.md)。
+
+### 命令行推送
+
+```bash
+echo "一整块文字" | uv run python scripts/push.py
+uv run python scripts/push.py --file 讲义.md --voice edge:zh-CN-XiaoxiaoNeural --follow
+```
+
+---
+
 ## 架构一图
 
 ```
@@ -124,6 +160,8 @@ curl -X POST http://127.0.0.1:8787/api/read \
 | `web/` | 跟读窗前端，原生 HTML/CSS/JS，**无构建步骤** |
 | `tests/` | 离线单元测试（29 个，`pytest`） |
 | `scripts/smoke.py` | 端到端冒烟测试：POST → SSE → 取音频 |
+| `scripts/push.py` | 把整块文字推给运行中的 NekoPal（管道 / 文件） |
+| `integrations/opencode-plugin/` | opencode V2 插件：回答完自动朗读 |
 | `docs/images/` | README 用的截图 |
 
 ---
