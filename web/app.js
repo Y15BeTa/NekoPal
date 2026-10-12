@@ -53,6 +53,20 @@ function loadPrefs() {
   }
 }
 
+/** 把界面选的音色同步给服务端 —— 这样「opencode 自动推送」的任务也会用它。 */
+async function syncVoiceToServer(voiceId) {
+  try {
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_voice: voiceId }),
+    });
+    return true;
+  } catch (err) {
+    return false; // 同步失败不影响手动朗读
+  }
+}
+
 /** 页面是否跑在原生外壳（nekopal app）里。 */
 function isShell() {
   return new URLSearchParams(location.search).get('shell') === 'app' || !!window.pywebview;
@@ -265,6 +279,10 @@ async function loadVoices() {
       reader.setRate(parseFloat(prefs.rate));
     }
 
+    // 关键：把当前音色同步给服务端 —— 否则「opencode 自动推送」的任务
+    // 会用服务端默认音色（晓晓），而不是你在这里选的（踩过这个 bug）。
+    if (preferred) syncVoiceToServer(preferred.id);
+
     renderPackProblems(data.pack_problems || []);
     setStatus('就绪 · ' + all.length + ' 个音色');
   } catch (err) {
@@ -388,7 +406,16 @@ els.rate.addEventListener('change', () => {
   reader.setRate(parseFloat(els.rate.value));
   savePrefs();
 });
-els.voice.addEventListener('change', savePrefs);
+els.voice.addEventListener('change', async () => {
+  savePrefs();
+  const ok = await syncVoiceToServer(els.voice.value);
+  const name = els.voice.selectedOptions?.[0]?.textContent || els.voice.value;
+  setStatus(
+    ok
+      ? '音色已换成「' + name.trim() + '」· 自动朗读也会用它'
+      : '音色已换（但同步给自动朗读失败）'
+  );
+});
 
 // 用户第一次点页面任意处即解锁自动播放
 document.addEventListener('pointerdown', unlockAudio, { once: true });
