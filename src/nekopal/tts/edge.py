@@ -10,7 +10,13 @@ import asyncio
 import importlib.util
 from typing import Any, Dict, List, Tuple
 
-from nekopal.core.models import Capabilities, SynthOptions, SynthResult, Voice, WordTiming
+from nekopal.core.models import (
+    Capabilities,
+    SynthOptions,
+    SynthResult,
+    Voice,
+    WordTiming,
+)
 from nekopal.media import MP3_BYTES_PER_SECOND
 
 #: 网络不可用时的最小音色集（保证 UI 不会空着）

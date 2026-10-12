@@ -1,10 +1,35 @@
 [project]
 name = "nekopal"
-version = "0.1.0"
+# 版本号**只写在一个地方**：src/nekopal/__init__.py 的 __version__
+# （以前 pyproject 和 __init__ 各写一份，迟早漂移）
+dynamic = ["version"]
 description = "把一整块文字交给一个角色，读给你听"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+authors = [{ name = "Yuwenyan" }]
+keywords = [
+    "tts",
+    "text-to-speech",
+    "read-aloud",
+    "accessibility",
+    "adhd",
+    "pywebview",
+    "rvc",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: MacOS X",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Chinese (Simplified)",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
@@ -16,7 +41,13 @@ dependencies = [
 edge = ["edge-tts>=6.1"]
 # 原生窗口外壳（nekopal app）
 desktop = ["pywebview>=5"]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/Y15BeTa/NekoPal"
+Repository = "https://github.com/Y15BeTa/NekoPal"
+Issues = "https://github.com/Y15BeTa/NekoPal/issues"
+Changelog = "https://github.com/Y15BeTa/NekoPal/commits/main"
 
 [project.scripts]
 nekopal = "nekopal.cli:main"
@@ -24,6 +55,10 @@ nekopal = "nekopal.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# 从 __init__.py 里读 __version__（不 import 整个包）
+path = "src/nekopal/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nekopal"]
@@ -35,3 +70,16 @@ addopts = "-q"
 markers = [
     "live: 需要联网或真实 TTS 的测试（默认不运行）",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# 故意选得**保守**：只抓"真的有问题"的（未用导入、未定义名字、导入顺序）。
+# 风格类（UP/B/SIM/RUF…）先在本地跑着玩，等哪天想统一了再逐步打开 ——
+# 一次性打开会在 4500 行里翻出 400+ 处，把历史搅乱，不值当。
+select = ["E4", "E7", "E9", "F", "I"]
+# 行宽交给格式化器，不在 lint 里卡（代码里有 100+ 字符的长行是有意的）
+ignore = ["E501"]

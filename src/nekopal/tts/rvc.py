@@ -30,9 +30,19 @@ import tempfile
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from nekopal.core.convert import CommandConverter, ConvertError, ConvertRequest, VoiceConverter
+from nekopal.core.convert import (
+    CommandConverter,
+    ConvertError,
+    ConvertRequest,
+    VoiceConverter,
+)
 from nekopal.core.export import decode, is_target_wav, write_wav
-from nekopal.core.models import Capabilities, SynthOptions, SynthResult, Voice, WordTiming
+from nekopal.core.models import (
+    Capabilities,
+    SynthOptions,
+    SynthResult,
+    Voice,
+)
 from nekopal.media import wav_duration, wav_sample_rate
 
 

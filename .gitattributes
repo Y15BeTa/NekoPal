@@ -1,0 +1,55 @@
+# 换行符统一：仓库里一律 LF，检出时按平台自动处理。
+# 有了它才不会出现「整文件被重写一遍」的假改动（Windows↔macOS 迁移踩过）。
+* text=auto eol=lf
+
+# ---- 文本（明确一遍，避免在 Windows 上退化成 CRLF）----
+*.py         text
+*.pyi        text
+*.md         text
+*.toml       text
+*.yaml       text
+*.yml        text
+*.json       text
+*.jsonc      text
+*.ts         text
+*.js         text
+*.css        text
+*.html       text
+*.cfg        text
+*.ini        text
+.gitignore   text
+.gitattributes text
+
+# 脚本：无论在哪台机器检出，都必须是 LF（尤其 .sh / .command）
+*.sh         text eol=lf
+*.command    text eol=lf
+
+# ---- 二进制：绝对不要做换行符转换 ----
+*.wav        binary
+*.mp3        binary
+*.m4a        binary
+*.aac        binary
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.webp       binary
+*.icns       binary
+*.ico        binary
+# 模型权重 / 素材（仓库零素材，但万一落到工作区也不该被当文本处理）
+*.pth        binary
+*.index      binary
+*.ckpt       binary
+*.safetensors binary
+*.onnx       binary
+# Live2D
+*.moc3           binary
+*.model3.json    binary
+*.motion3.json   binary
+*.physics3.json  binary
+*.pose3.json     binary
+*.cdi3.json      binary
+
+# ---- 生成物 ----
+# uv.lock 由 uv 生成：合并冲突时不要试图逐行合并，也别计入语言统计
+uv.lock      linguist-generated=true merge=union

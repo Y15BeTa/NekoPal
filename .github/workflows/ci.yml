@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支连着推时，取消上一次还没跑完的，省额度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # ⚠️ 目前是 **macOS 优先**：`say` 离线后端是 macOS 专属，
+    #    而且少量测试依赖它的「可用性」（例如 resolve_voice_id("say:auto")
+    #    必须能解析成具体音色，否则缓存键不稳定 —— 这条在 Linux 上必然失败）。
+    #    等 Windows / Linux 路径成熟了再加对应 runner（见 README 的路线图）。
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # 不装 edge / desktop 两个 extra —— 测试全部离线，用 tests/fakes/ 的假后端
+      - name: 装依赖（含 dev）
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+
+      - name: Lint（ruff）
+        run: uv run ruff check .
+
+      - name: 测试
+        run: uv run pytest
