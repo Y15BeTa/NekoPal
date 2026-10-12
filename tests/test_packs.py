@@ -123,8 +123,8 @@ def test_rvc_pack_requires_base_voice_and_model(tmp_path):
     """变声音色必须说明「先用谁合成」和「用哪个模型」。"""
 
     write_pack(
-        tmp_path, "rana", "voice",
-        voice_data(id="rana", backend="rvc", rvc={"base_voice": "edge:zh-CN-XiaoxiaoNeural"}),
+        tmp_path, "demo", "voice",
+        voice_data(id="demo", backend="rvc", rvc={"base_voice": "edge:zh-CN-XiaoxiaoNeural"}),
     )
     collection = load(voices_dir=tmp_path, backends=("say", "edge", "rvc"))
     assert collection.voices == []
@@ -133,14 +133,14 @@ def test_rvc_pack_requires_base_voice_and_model(tmp_path):
 
 def test_rvc_pack_loads_when_complete(tmp_path):
     folder = write_pack(
-        tmp_path, "rana", "voice",
+        tmp_path, "demo", "voice",
         voice_data(
-            id="rana",
+            id="demo",
             backend="rvc",
             rvc={
                 "base_voice": "edge:zh-CN-XiaoxiaoNeural",
-                "model": "rana.pth",
-                "index": "rana.index",
+                "model": "demo.pth",
+                "index": "demo.index",
             },
         ),
     )
@@ -148,35 +148,35 @@ def test_rvc_pack_loads_when_complete(tmp_path):
     assert collection.voices == []
     assert "变声模型不存在" in collection.problems[0].reason
 
-    (folder / "rana.pth").write_bytes(b"fake-model")
+    (folder / "demo.pth").write_bytes(b"fake-model")
     collection = load(voices_dir=tmp_path, backends=("say", "edge", "rvc"))
     assert collection.voices == []
     assert "index 文件不存在" in collection.problems[0].reason
 
-    (folder / "rana.index").write_bytes(b"fake-index")
+    (folder / "demo.index").write_bytes(b"fake-index")
     collection = load(voices_dir=tmp_path, backends=("say", "edge", "rvc"))
     assert len(collection.voices) == 1
     pack = collection.voices[0]
-    assert pack.full_id == "rvc:rana"
+    assert pack.full_id == "rvc:demo"
     assert pack.base_voice == "edge:zh-CN-XiaoxiaoNeural"
-    assert pack.rvc_model.endswith("rana.pth")
-    assert pack.rvc_index.endswith("rana.index")
+    assert pack.rvc_model.endswith("demo.pth")
+    assert pack.rvc_index.endswith("demo.index")
 
 
 def test_rvc_pack_verdict_is_unofficial_friendly(tmp_path):
     """社区模型如实标 unofficial —— 界面会据此打黄标，而不是假装合法。"""
 
     folder = write_pack(
-        tmp_path, "rana", "voice",
+        tmp_path, "demo", "voice",
         voice_data(
-            id="rana",
+            id="demo",
             backend="rvc",
             license="unofficial",
             commercial_ok=False,
-            rvc={"base_voice": "say:auto", "model": "rana.pth"},
+            rvc={"base_voice": "say:auto", "model": "demo.pth"},
         ),
     )
-    (folder / "rana.pth").write_bytes(b"fake")
+    (folder / "demo.pth").write_bytes(b"fake")
     pack = load(voices_dir=tmp_path, backends=("say", "edge", "rvc")).voices[0]
     assert pack.license == "unofficial"
     assert pack.commercial_ok is False

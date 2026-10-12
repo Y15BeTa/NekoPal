@@ -51,9 +51,9 @@ class FakeRegistry:
 
 
 class FakePack:
-    id = "rana"
+    id = "demo"
     base_voice = "edge:zh-CN-XiaoxiaoNeural"
-    rvc_model = "/tmp/rana.pth"
+    rvc_model = "/tmp/demo.pth"
     rvc_index = None
     command = None
 
@@ -125,7 +125,7 @@ def test_stamp_capabilities_ignores_unknown_backend():
 def test_synth_uses_base_voice_then_converts():
     backend, registry = build_backend()
 
-    result = asyncio.run(backend.synth("rvc:rana", "要读的文本", SynthOptions()))
+    result = asyncio.run(backend.synth("rvc:demo", "要读的文本", SynthOptions()))
 
     # ① 先用基础音色合成
     assert registry.calls == [("edge:zh-CN-XiaoxiaoNeural", "要读的文本")]
@@ -165,7 +165,7 @@ def test_pack_level_command_overrides_global():
     from nekopal.core.convert import ConvertError
 
     with pytest.raises(ConvertError) as excinfo:
-        asyncio.run(backend.synth("rvc:rana", "文本", SynthOptions()))
+        asyncio.run(backend.synth("rvc:demo", "文本", SynthOptions()))
     assert "退出码 7" in str(excinfo.value)
 
 
@@ -174,4 +174,4 @@ def test_synth_errors_without_any_command():
     from nekopal.core.convert import ConvertError
 
     with pytest.raises(ConvertError):
-        asyncio.run(backend.synth("rvc:rana", "文本", SynthOptions()))
+        asyncio.run(backend.synth("rvc:demo", "文本", SynthOptions()))
