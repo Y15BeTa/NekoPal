@@ -1,5 +1,9 @@
 # NekoPal · 猫伴
 
+[![CI](https://github.com/Y15BeTa/NekoPal/actions/workflows/ci.yml/badge.svg)](https://github.com/Y15BeTa/NekoPal/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+
 > 让一个你喜欢的角色，把长文读给你听。
 > 一整块内容丢给它 —— 它开始念，文字跟着声音逐句高亮、自动往下滚；它还能趴在桌面角落陪着你，把讲义变成通勤路上听的播客。
 
