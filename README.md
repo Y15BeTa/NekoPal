@@ -54,7 +54,7 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 | **原生窗口外壳** | `nekopal app`：不开浏览器、**无需点击**即可自动朗读 | ✅ 可用 |
 | **导出音频** | `nekopal export`：wav / m4a **零额外依赖**（mp3 需 ffmpeg） | ✅ 可用 |
 | **音色包 / 角色包（只做接口）** | `nekopal packs`：扫描、校验、模板；**不内置任何素材** | ✅ 可用 |
-| **变声后端（RVC / DDSP-SVC）** | `nekopal convert`：`base_voice 合成 → 变声命令`，能接任何音频→音频工具 | ✅ 可用 |
+| **变声后端（RVC / DDSP-SVC）** | `nekopal convert`：`base_voice 合成 → 变声命令`，实测跑通要楽奈音色 | ✅ **可用**（⚠️ 每句约 5.5s，待做常驻服务） |
 | **开机自启** | `nekopal autostart install`（macOS LaunchAgent） | ✅ 可用 |
 | **导出 mp3（通勤播客）** | 一键把整篇导出为音频文件 | 🔜 Phase 2 |
 | **文件模式** | 打开 `.md`，跟读窗自渲染整篇 | 🔜 Phase 2 |
