@@ -134,10 +134,18 @@ async function push(text: string, sessionID: string): Promise<void> {
     await report("push-failed", { sessionID, status: response.status, detail: detail.slice(0, 200) });
     return;
   }
+
+  // 服务端会把「同一轮被多个插件实例重复推送」去重掉，这里如实反映
+  const body = await response.json().catch(() => ({}));
+  if (body && body.deduped) {
+    await report("deduped", { sessionID, taskID: body.task_id ?? null });
+    return;
+  }
+
   if (DEBUG) {
     console.log(`[nekopal] 已推送 ${text.length} 字（session ${sessionID}）`);
   }
-  await report("pushed", { sessionID, chars: text.length });
+  await report("pushed", { sessionID, chars: text.length, taskID: body?.task_id ?? null });
 }
 
 /**
