@@ -20,6 +20,25 @@ COPY_COMMAND = [
     "{output}",
 ]
 
+#: 假变声命令：帧不动，只把采样率改写成 48k —— 模拟真实 RVC 的输出（实测就是 48k）
+RELABEL_RATE_COMMAND = [
+    sys.executable,
+    "-c",
+    (
+        "import sys, wave\n"
+        "src = wave.open(sys.argv[1])\n"
+        "frames = src.readframes(src.getnframes())\n"
+        "dst = wave.open(sys.argv[2], 'wb')\n"
+        "dst.setnchannels(src.getnchannels())\n"
+        "dst.setsampwidth(src.getsampwidth())\n"
+        "dst.setframerate(48000)\n"
+        "dst.writeframes(frames)\n"
+        "dst.close()\n"
+    ),
+    "{input}",
+    "{output}",
+]
+
 
 def target_wav_bytes(seconds: float = 0.3, rate: int = 24000) -> bytes:
     buffer = io.BytesIO()
@@ -34,17 +53,19 @@ def target_wav_bytes(seconds: float = 0.3, rate: int = 24000) -> bytes:
 class FakeRegistry:
     """假装自己是 TTSRegistry，记录被请求的基础音色。"""
 
-    def __init__(self) -> None:
+    def __init__(self, words=None, rate: int = 24000) -> None:
         self.calls = []
+        self.words = list(words or [])
+        self.rate = rate
 
     async def synth(self, voice_id, text, options):
         self.calls.append((voice_id, text))
-        data = target_wav_bytes(0.25)
+        data = target_wav_bytes(0.25, rate=self.rate)
         return SynthResult(
             audio=data,
-            sample_rate=24000,
+            sample_rate=self.rate,
             duration=0.25,
-            words=[],
+            words=list(self.words),
             media_type="audio/wav",
             extension="wav",
         )
@@ -134,6 +155,79 @@ def test_synth_uses_base_voice_then_converts():
     assert result.media_type == "audio/wav"
     assert result.words == []
     assert result.duration == pytest.approx(0.25, abs=0.02)
+
+
+def test_word_timings_pass_through_from_base_voice():
+    """变声不改动时间轴，所以 base 的词级时间戳要**透传**（不再一律降级句级）。
+
+    实测依据：5.136s 的 base 音频经 RVC 后为 5.120s，漂移仅 **16ms（≈0.31%）**。
+    因此前端照常逐词高亮，而不是退回整句高亮。
+    """
+
+    from nekopal.core.models import WordTiming
+
+    words = [
+        WordTiming(t0=0.0, t1=0.1, text="你好"),
+        WordTiming(t0=0.1, t1=0.25, text="世界"),
+    ]
+    backend = RvcBackend(settings_with())
+    backend.attach(FakeRegistry(words=words), lambda voice_id: FakePack())
+
+    result = asyncio.run(backend.synth("rvc:demo", "你好世界", SynthOptions()))
+
+    assert [(w.text, w.t0, w.t1) for w in result.words] == [
+        ("你好", 0.0, 0.1),
+        ("世界", 0.1, 0.25),
+    ]
+
+
+def test_word_timings_stay_empty_when_base_has_none():
+    """base 音色本身没有时间戳（如 say）时，优雅退回句级 —— 不是报错。"""
+
+    backend = RvcBackend(settings_with())
+    backend.attach(FakeRegistry(words=[]), lambda voice_id: FakePack())
+
+    result = asyncio.run(backend.synth("rvc:demo", "文本", SynthOptions()))
+    assert result.words == []
+
+
+def test_sample_rate_read_from_output_wav():
+    """采样率由变声工具决定，**不能写死**。
+
+    踩过：这里原写 `sample_rate=24000`，但实测真实 RVC 输出是 **48000 Hz**
+    （``convert_cli.py`` 里的 ``out_rate``）。虽然当时没人读这个字段，
+    但留着就是一条"撒谎的元数据"。
+    """
+
+    backend = RvcBackend(settings_with(command=RELABEL_RATE_COMMAND))
+    backend.attach(FakeRegistry(), lambda voice_id: FakePack())
+
+    result = asyncio.run(backend.synth("rvc:demo", "文本", SynthOptions()))
+
+    assert result.sample_rate == 48000
+
+
+def test_base_audio_is_normalised_to_24k_before_conversion():
+    """base 音频在交给变声工具**之前**会被归一化成 24k / 单声道 / 16bit。
+
+    这是刻意的（统一"给 WAV 还 WAV"的契约），但以前没写在文档里 —— 属于隐含逻辑。
+    证据：让 base 产出 40k，再让假命令原样复制 → 结果只剩 24k。
+    """
+
+    backend = RvcBackend(settings_with())  # COPY_COMMAND：把输入原样复制
+    backend.attach(FakeRegistry(rate=40000), lambda voice_id: FakePack())
+
+    result = asyncio.run(backend.synth("rvc:demo", "文本", SynthOptions()))
+
+    assert result.sample_rate == 24000  # 40k 的 base 被规范化成 24k 后才喂进去
+
+
+def test_synth_result_default_sample_rate_when_unparsable():
+    """输出不是合法 WAV 时，采样率回退到默认值而不是 0（不要制造新的假数据）。"""
+
+    from nekopal.media import FALLBACK_SAMPLE_RATE, wav_sample_rate
+
+    assert wav_sample_rate(b"not a wav at all") == FALLBACK_SAMPLE_RATE
 
 
 def test_synth_errors_when_pack_missing():

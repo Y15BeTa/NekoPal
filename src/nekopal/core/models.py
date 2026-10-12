@@ -17,7 +17,11 @@ LICENSE_LEVELS = ("official", "self-recorded", "licensed", "public-domain", "uno
 #: 缓存格式版本。
 #: 当**合成结果的结构**发生变化（新增/修改字段、时间戳语义变化、后端行为修正）时
 #: 必须递增，否则老缓存会以"看起来正常"的姿态污染新逻辑。
-CACHE_VERSION = "1"
+#:
+#: v2（2026-10-13）：变声后端开始**透传 base 音色的词级时间戳**，
+#: 并且采样率改为从 WAV 头读取（原来写死 24000，实测真实 RVC 输出是 48000）。
+#: v1 存下来的 `words` 恒为空 → 不升版本的话，词级高亮"改了也看不出效果"。
+CACHE_VERSION = "2"
 
 
 @dataclass(frozen=True)

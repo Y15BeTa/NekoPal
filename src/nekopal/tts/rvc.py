@@ -33,7 +33,7 @@ from typing import Callable, List, Optional
 from nekopal.core.convert import CommandConverter, ConvertError, ConvertRequest, VoiceConverter
 from nekopal.core.export import decode, is_target_wav, write_wav
 from nekopal.core.models import Capabilities, SynthOptions, SynthResult, Voice, WordTiming
-from nekopal.media import wav_duration
+from nekopal.media import wav_duration, wav_sample_rate
 
 
 class RvcBackend:
@@ -56,7 +56,10 @@ class RvcBackend:
     # -- 能力 ------------------------------------------------------------
     def capabilities(self) -> Capabilities:
         return Capabilities(
-            word_timings=False,   # 变声不产生词级时间戳（前端自动降级为句级）
+            # 变声本身**不产生**时间戳；能拿到词级只是因为 base 音色有（见 synth 里透传
+            # `base_result.words`）。所以这里保守报 False。
+            # 前端是**看数据**决定的（`segment.words` 非空才逐词高亮），不依赖这个标志。
+            word_timings=False,
             rate=True,            # 由 base_voice 负责
             pitch=True,           # 映射到命令模板的 {pitch}
             volume=False,
@@ -141,9 +144,12 @@ class RvcBackend:
 
         return SynthResult(
             audio=data,
-            sample_rate=24000,
+            # 采样率由变声工具决定（RVC 常见 40k/48k），从 WAV 头读，不要写死。
+            sample_rate=wav_sample_rate(data),
             duration=wav_duration(data),
-            words=[],  # 变声不提供词级时间戳
+            # 变声本身不产生时间戳，但**它几乎不改动时间轴**（实测 5.1s 音频漂移约 16ms），
+            # 所以把 base 音色的词级时间戳**透传**上去 —— 前端有词就逐词高亮，没有就退回句级。
+            words=list(base_result.words),
             media_type="audio/wav",
             extension="wav",
         )
