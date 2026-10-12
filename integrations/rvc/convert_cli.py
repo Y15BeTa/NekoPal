@@ -21,9 +21,18 @@ NekoPal 的变声后端（`nekopal convert`）只约定这一件事，所以本�
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import warnings
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# ⚠️ 必须在 import torch / faiss **之前**设置，否则 macOS arm64 上会段错误：
+#     libomp __kmp_create_worker → SIGSEGV（faiss 检索时创建 OpenMP 线程崩溃）
+# 限制 OpenMP 线程数是关键；只允许重复库（KMP_DUPLICATE_LIB_OK）还不够。
+# ---------------------------------------------------------------------------
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 
 def build_parser() -> argparse.ArgumentParser:

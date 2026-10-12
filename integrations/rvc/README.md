@@ -103,18 +103,37 @@ nekopal convert test --pack rana
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
+| **段错误 / 进程静默退出（无报错）** | **faiss 的 OpenMP 线程创建在 macOS arm64 上崩溃**（`libomp __kmp_create_worker` → SIGSEGV） | ✅ 已内置修复：脚本里设了 `OMP_NUM_THREADS=1`（**只设 `KMP_DUPLICATE_LIB_OK` 不够**） |
 | `变声失败：模型不存在` | 路径不对 | 检查 `voice.yaml` 里的 `model`，模型要放在音色包目录里 |
+| `Missing 'config' dictionary in checkpoint` | 用了**训练用基础模型**（如 `pretrained_v2/f0G40k.pth`），不是推理模型 | 必须用**训练好的**模型（含 `config` 字典） |
 | `import infer_rvc_python 失败` | 用错解释器 | 必须是 `~/.local/share/nekopal/rvc-venv/bin/python` |
 | `No module named 'pkg_resources'` | setuptools 太新 | 装 `"setuptools<81"` |
 | `Could not import module 'HubertModel'` | transformers 太新 | 装 `"transformers<5"` |
 | 卡很久没输出 | 首次在下载 HuBERT | 耐心等；或 `--quiet` 看不到进度 |
 | 输出有电音/杂音 | `pitch_lvl` 不对 | 男声→女声试试 `--pitch 12`，反之 `-12` |
+
+> 📌 **排查心得**：进程**静默退出、没有 Python 报错**时，去
+> `~/Library/Logs/DiagnosticReports/*.ips` 看崩溃报告 ——
+> 它能直接告诉你崩在哪个库的哪个函数（我们就是这样定位到 `libomp` 的）。
 | 速度很慢 | CPU 推理 | 正常；NekoPal 的预合成队列会掩盖一部分 |
 
 ---
 
 ## 六、性能提示
 
-- 变声会**让每句的合成时间大约翻倍**（先 TTS 再变声）。NekoPal 的预合成队列能掩盖，
-  但队列要够深（`NEKOPAL_PREFETCH`，默认 3）。
+**实测（Apple M5，VCTK 女声模型）**：
+
+| 指标 | 数值 |
+| --- | --- |
+| 稳态推理 RTF | **0.39**（4.27s 音频 → 1.67s）—— 比实时快约 2.5 倍 |
+| **每次进程启动的开销** | **约 3.5 秒**（python + torch/faiss 导入 + HuBERT 加载） |
+
+⚠️ **关键瓶颈不在推理，而在"每句话都新起一个进程"**：单句端到端约 5.5 秒
+（TTS 0.5s + 变声 5s），其中 3.5s 是固定开销。
+
+**推论**：短句密集时，生产者会跟不上播放（每句落后约 1.5 秒）。
+彻底解法是**常驻变声服务**（模型只加载一次，每句只走一次 HTTP），
+这是下一步待做的事。
+
 - 变声**不产出词级时间戳** → 高亮自动降级为**句级**（这是正常的）。
+- 队列深度可调：`NEKOPAL_PREFETCH`（默认 3）；变声场景建议调到 5–6。
