@@ -66,6 +66,20 @@ class TTSRegistry:
         return voice_id
 
     # -- 查询 ------------------------------------------------------------
+    def stamp_capabilities(self, voices: List[Voice]) -> List[Voice]:
+        """让音色继承它所属**后端**的能力。
+
+        后端是能力的**唯一来源**（设计文档 6.7）：音色包只声明"用哪个后端"，
+        不该自己再编一份能力出来 —— 否则界面的能力协商会读到假信息
+        （踩过：包音色一度报 `rate=False`，而 rvc 后端其实是 True）。
+        """
+
+        for voice in voices:
+            backend = self.get(voice.backend)
+            if backend is not None:
+                voice.capabilities = backend.capabilities()
+        return voices
+
     def describe(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         for backend in self.all():

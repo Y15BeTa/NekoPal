@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from nekopal.core.models import SynthOptions, SynthResult
+from nekopal.tts.registry import build_registry
 from nekopal.tts.rvc import RvcBackend
 
 COPY_COMMAND = [
@@ -88,6 +89,35 @@ def test_list_voices_is_empty_by_design():
 
     backend, _ = build_backend()
     assert asyncio.run(backend.list_voices()) == []
+
+
+def test_stamp_capabilities_takes_them_from_the_backend(tmp_path):
+    """音色包只声明"用哪个后端"；能力必须以后端为准（设计文档 6.7）。
+
+    踩过：包音色一度报 rate=False / pitch=False（Voice 的默认值），
+    而 rvc 后端实际是 rate=True / pitch=True → 界面的能力协商读到假信息。
+    """
+
+    from nekopal.core.models import Voice
+
+    registry = build_registry(SimpleNamespace(rvc_command=[], rvc_timeout=60.0))
+
+    from_pack = Voice(id="rvc:demo", name="包音色", backend="rvc")
+    assert from_pack.capabilities.rate is False  # 默认值：确实没有能力
+
+    registry.stamp_capabilities([from_pack])
+    assert from_pack.capabilities.rate is True
+    assert from_pack.capabilities.pitch is True
+    assert from_pack.capabilities.word_timings is False
+
+
+def test_stamp_capabilities_ignores_unknown_backend():
+    from nekopal.core.models import Voice
+
+    registry = build_registry(SimpleNamespace(rvc_command=[], rvc_timeout=60.0))
+    orphan = Voice(id="ghost:x", name="幽灵", backend="ghost")
+    registry.stamp_capabilities([orphan])
+    assert orphan.capabilities.rate is False  # 找不到后端就保持原样，不报错
 
 
 # ---- 组合管线 -------------------------------------------------------------

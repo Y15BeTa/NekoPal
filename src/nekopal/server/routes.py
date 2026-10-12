@@ -67,6 +67,8 @@ def build_router(runtime: Runtime) -> APIRouter:
         collection = runtime.load_packs()
         # 用户自己的包排在前面（覆盖同名内置音色的优先级更高）
         merged = [pack.to_voice() for pack in collection.voices] + items
+        # 能力以后端为唯一来源：音色包不该自己编一份（设计文档 6.7）
+        runtime.tts.stamp_capabilities(merged)
         return {
             "default": runtime.tts.resolve_voice_id(
                 runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
