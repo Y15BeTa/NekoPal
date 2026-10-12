@@ -4,6 +4,7 @@
     nekopal app            打开原生窗口（桌面外壳）
     nekopal open           在浏览器打开跟读窗
     nekopal read "文字"    命令行直接朗读（本机播放）
+    nekopal export         导出音频文件（通勤播客）
     nekopal voices         列出可用音色
     nekopal autostart ...  开机自启（macOS LaunchAgent）
 """
@@ -101,6 +102,81 @@ def _cmd_read(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    """把一整块文字合成并导出成一个音频文件（通勤播客）。"""
+
+    from nekopal.core.cache import AudioCache
+    from nekopal.core.export import ExportError, assemble, available_formats
+    from nekopal.core.models import SynthOptions
+    from nekopal.core.pipeline import prepare_sentences, synthesize_sentence
+    from nekopal.tts.registry import build_registry
+
+    settings = load_settings()
+
+    text = args.text or ""
+    if args.file:
+        with open(args.file, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    if not text.strip() and not sys.stdin.isatty():
+        text = sys.stdin.read()
+    if not text.strip():
+        print("没有可导出的文字（用参数、--file 或 stdin 传入）", file=sys.stderr)
+        return 2
+
+    fmt = args.format or settings.export_format
+    gap = settings.export_gap if args.gap is None else args.gap
+
+    registry = build_registry()
+    cache = AudioCache(settings.cache_dir, max_mb=settings.cache_max_mb)
+    voice = registry.resolve_voice_id(
+        args.voice or settings.default_voice, fallback=settings.fallback_voice
+    )
+    options = SynthOptions(rate=args.rate)
+    sentences = prepare_sentences(text, {}, settings.clean)
+    if not sentences:
+        print("清洗后没有可朗读的内容", file=sys.stderr)
+        return 2
+
+    print("共 {} 句 · 音色 {} · 目标格式 {}".format(len(sentences), voice, fmt))
+
+    async def collect():
+        paths = []
+        try:
+            for index, sentence in enumerate(sentences, 1):
+                segment, _ = await synthesize_sentence(
+                    sentence, voice, options, registry, cache, settings.fallback_voice
+                )
+                paths.append(segment.path)
+                print("  [{}/{}] {:5.2f}s  {}".format(index, len(sentences), segment.duration, sentence[:26]))
+        finally:
+            await registry.aclose()
+        return paths
+
+    paths = asyncio.run(collect())
+
+    name = args.name or (Path(args.file).stem if args.file else "nekopal-export")
+    out_dir = Path(args.out).expanduser() if args.out else settings.export_dir
+    try:
+        result = assemble(paths, out_dir / name, fmt=fmt, gap=gap)
+    except ExportError as exc:
+        print("导出失败：{}".format(exc), file=sys.stderr)
+        usable = [key for key, ok in available_formats().items() if ok]
+        print("本机可用格式：{}".format("、".join(usable) or "（无）"), file=sys.stderr)
+        return 1
+
+    print()
+    print("✅ 已导出 {}".format(result["path"]))
+    print(
+        "   {} · {:.1f} 分钟 · {:.1f} MB · {} 段".format(
+            result["format"],
+            result["duration"] / 60.0,
+            result["bytes"] / 1048576.0,
+            result["segments"],
+        )
+    )
+    return 0
+
+
 def _cmd_app(args: argparse.Namespace) -> int:
     from nekopal.desktop import run_app
 
@@ -148,6 +224,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("voices", help="列出可用音色")
 
+    export_cmd = sub.add_parser("export", help="导出音频（通勤播客）")
+    export_cmd.add_argument("text", nargs="?", help="要导出的文字（省略则读 --file 或 stdin）")
+    export_cmd.add_argument("--file", help="从文件读取（.md 会自动清洗）")
+    export_cmd.add_argument("--format", default=None, choices=["wav", "m4a", "aac", "mp3"])
+    export_cmd.add_argument("--voice", default=None)
+    export_cmd.add_argument("--rate", type=float, default=1.0)
+    export_cmd.add_argument("--out", default=None, help="输出目录（默认 ~/NekoPal/export）")
+    export_cmd.add_argument("--name", default=None, help="文件名（不含扩展名）")
+    export_cmd.add_argument("--gap", type=float, default=None, help="段间静音秒数（默认 0.15）")
+
     app_cmd = sub.add_parser("app", help="打开原生窗口（桌面外壳）")
     app_cmd.add_argument("--host", default=None)
     app_cmd.add_argument("--port", type=int, default=None)
@@ -175,6 +261,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "open": _cmd_open,
         "read": _cmd_read,
         "voices": _cmd_voices,
+        "export": _cmd_export,
         "autostart": _cmd_autostart,
     }
     handler = handlers.get(args.command)

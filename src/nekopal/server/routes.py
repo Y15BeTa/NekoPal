@@ -5,20 +5,31 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 
 from nekopal import __version__
+from nekopal.core import export as audio_export
+from nekopal.core.export import ExportError, available_formats, missing_tool
 from nekopal.core.models import SynthOptions
-from nekopal.core.pipeline import prepare_sentences
+from nekopal.core.pipeline import prepare_sentences, synthesize_sentence
 from nekopal.server.schemas import InvalidRequest, parse_read_request
 from nekopal.server.state import Runtime
 
 
 def _invalid(message: str) -> HTTPException:
     return HTTPException(400, {"code": "INVALID_REQUEST", "message": message})
+
+
+def _safe_name(raw: str) -> str:
+    """把用户给的文件名清理成安全的一段（去掉路径分隔符与控制字符）。"""
+
+    cleaned = re.sub(r"[/\\:*?\"<>|\x00-\x1f]", "-", raw).strip(" .-")
+    return cleaned[:80]
 
 
 def build_router(runtime: Runtime) -> APIRouter:
@@ -43,6 +54,7 @@ def build_router(runtime: Runtime) -> APIRouter:
             "fallback_voice": runtime.settings.fallback_voice,
             "backends": runtime.tts.describe(),
             "cache": runtime.cache.stats(),
+            "export_formats": available_formats(),
         }
 
     @router.get("/backends")
@@ -278,11 +290,99 @@ def build_router(runtime: Runtime) -> APIRouter:
         )
 
     @router.post("/export")
-    async def export() -> dict:
-        raise HTTPException(
-            501,
-            {"code": "NOT_IMPLEMENTED", "message": "音频导出将在 Phase 2 提供"},
+    async def export(request: Request) -> dict:
+        """把整篇合成结果导出成一个音频文件（设计文档 4.2 / 5.8）。
+
+        两种入口：给 ``task_id`` 复用刚朗读过的缓存；或直接给 ``text`` 现场合成。
+        """
+
+        data = await _json(request)
+        if not isinstance(data, dict):
+            raise _invalid("请求体必须是 JSON 对象")
+
+        settings = runtime.settings
+        fmt = str(data.get("format") or settings.export_format)
+        try:
+            gap = float(data.get("gap", settings.export_gap))
+        except (TypeError, ValueError):
+            gap = settings.export_gap
+
+        tool = missing_tool(fmt)
+        if tool is not None:
+            hint = "brew install ffmpeg" if tool == "ffmpeg" else "需要 macOS 自带的 {}".format(tool)
+            raise HTTPException(
+                409,
+                {
+                    "code": "TOOL_MISSING",
+                    "message": "导出 {} 需要 {}（{}）".format(fmt, tool, hint),
+                },
+            )
+
+        name = _safe_name(str(data.get("filename") or ""))
+        sources: list = []
+
+        task_id = data.get("task_id")
+        text = data.get("text")
+
+        if isinstance(task_id, str) and task_id:
+            task = runtime.tasks.get(task_id)
+            if task is None:
+                raise HTTPException(
+                    404, {"code": "TASK_NOT_FOUND", "message": "任务不存在或已过期"}
+                )
+            for audio_id in task.audio_ids:
+                segment = runtime.cache.load(audio_id)
+                if segment is not None:
+                    sources.append(segment.path)
+            if not name:
+                name = _safe_name(str(task.request.source.get("title") or ""))
+
+        elif isinstance(text, str) and text.strip():
+            voice = runtime.tts.resolve_voice_id(
+                str(data.get("voice") or settings.default_voice),
+                fallback=settings.fallback_voice,
+            )
+            options = SynthOptions.from_dict(data.get("options"))
+            sentences = prepare_sentences(text, {}, settings.clean)
+            if not sentences:
+                raise HTTPException(
+                    422, {"code": "TEXT_TOO_LONG", "message": "清洗后没有可朗读的内容"}
+                )
+            for sentence in sentences:
+                segment, _ = await synthesize_sentence(
+                    sentence,
+                    voice,
+                    options,
+                    runtime.tts,
+                    runtime.cache,
+                    settings.fallback_voice,
+                )
+                sources.append(segment.path)
+        else:
+            raise _invalid("需要提供 `task_id` 或 `text` 之一")
+
+        if not sources:
+            raise HTTPException(
+                409, {"code": "EXPORT_FAILED", "message": "没有可导出的音频段"}
+            )
+
+        output_base = settings.export_dir / (name or "nekopal-export")
+        try:
+            result = audio_export.assemble(sources, output_base, fmt=fmt, gap=gap)
+        except ExportError as exc:
+            raise HTTPException(
+                409, {"code": "EXPORT_FAILED", "message": str(exc)}
+            ) from exc
+
+        result["filename"] = Path(result["path"]).name
+        runtime.record(
+            "export",
+            format=fmt,
+            segments=result["segments"],
+            bytes=result["bytes"],
+            path=result["path"],
         )
+        return result
 
     @router.get("/characters")
     async def characters() -> dict:

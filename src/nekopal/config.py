@@ -78,6 +78,11 @@ class Settings:
     #: 同一内容源在这么短时间内重复推送同一段文本，视为重复触发（插件被加载多实例）
     dedupe_window: float = 10.0
 
+    #: 导出（通勤播客）：目录、段间静音、默认格式
+    export_dir: Path = field(default_factory=lambda: Path.home() / "NekoPal" / "export")
+    export_gap: float = 0.15
+    export_format: str = "m4a"
+
     web_dir: Optional[Path] = field(default_factory=default_web_dir)
 
     def to_dict(self) -> dict:
@@ -94,6 +99,9 @@ class Settings:
             "auto_scroll": self.auto_scroll,
             "prefetch": self.prefetch,
             "dedupe_window": self.dedupe_window,
+            "export_dir": str(self.export_dir),
+            "export_gap": self.export_gap,
+            "export_format": self.export_format,
         }
 
 
@@ -109,6 +117,9 @@ def load_settings() -> Settings:
     s.rate = _env_float("NEKOPAL_RATE", s.rate)
     s.prefetch = max(1, _env_int("NEKOPAL_PREFETCH", s.prefetch))
     s.dedupe_window = _env_float("NEKOPAL_DEDUPE_WINDOW", s.dedupe_window)
+    s.export_dir = Path(_env("NEKOPAL_EXPORT_DIR", str(s.export_dir)))
+    s.export_gap = _env_float("NEKOPAL_EXPORT_GAP", s.export_gap)
+    s.export_format = _env("NEKOPAL_EXPORT_FORMAT", s.export_format)
 
     web = os.environ.get("NEKOPAL_WEB_DIR")
     if web:

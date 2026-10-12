@@ -38,6 +38,8 @@ class ReadTask:
         self.created_at = time.time()
         self.cancelled = False
         self.finished = False
+        #: 按播放顺序记下每段的 audio id —— 导出时直接复用这些缓存，不重新合成
+        self.audio_ids: List[str] = []
         self._queue: "asyncio.Queue[Any]" = asyncio.Queue(maxsize=max(2, queue_size))
         self._runner: Optional["asyncio.Task[None]"] = None
 
@@ -93,6 +95,8 @@ class ReadTask:
 
     # -- 事件 ------------------------------------------------------------
     async def emit(self, event_type: str, data: Dict[str, Any]) -> None:
+        if event_type == "segment" and data.get("audio"):
+            self.audio_ids.append(str(data["audio"]).rsplit("/", 1)[-1])
         payload: Dict[str, Any] = {"task_id": self.id}
         payload.update(data)
         await self._queue.put({"type": event_type, "data": payload})
