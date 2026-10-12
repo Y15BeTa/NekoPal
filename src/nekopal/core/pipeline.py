@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from nekopal.core.cache import AudioCache, CachedSegment
 from nekopal.core.models import SynthOptions
@@ -32,17 +32,35 @@ async def synthesize_sentence(
     options: SynthOptions,
     registry,
     cache: AudioCache,
-) -> CachedSegment:
-    """合成一句；命中缓存则直接复用。"""
+    fallback_voice: Optional[str] = None,
+) -> Tuple[CachedSegment, bool]:
+    """合成一句；命中缓存则直接复用。
+
+    返回 ``(segment, used_fallback)``。
+    主音色失败时（比如联网音色断网了）自动改用 ``fallback_voice``，
+    并**用后备音色自己的缓存键**存下来 —— 这样恢复联网后主音色仍然可用。
+    """
 
     key = cache.key(sentence, voice_id, options)
     hit = cache.load(key)
     if hit is not None:
-        return hit
-    result = await registry.synth(voice_id, sentence, options)
+        return hit, False
+
+    try:
+        result = await registry.synth(voice_id, sentence, options)
+    except Exception:
+        if not fallback_voice or fallback_voice == voice_id:
+            raise
+        fallback_key = cache.key(sentence, fallback_voice, options)
+        hit = cache.load(fallback_key)
+        if hit is not None:
+            return hit, True
+        result = await registry.synth(fallback_voice, sentence, options)
+        return cache.store(fallback_key, sentence, fallback_voice, result), True
+
     segment = cache.store(key, sentence, voice_id, result)
     cache.evict()
-    return segment
+    return segment, False
 
 
 async def produce_segments(
@@ -54,6 +72,7 @@ async def produce_segments(
     emit: EmitFn,
     is_cancelled: Callable[[], bool],
     start: int = 0,
+    fallback_voice: Optional[str] = None,
 ) -> None:
     """从 ``start`` 开始逐句合成并推送，始终保持「下一句已在合成中」。
 
@@ -65,12 +84,15 @@ async def produce_segments(
     if total == 0 or start >= total:
         return
 
-    def _synth(index: int) -> "asyncio.Task[CachedSegment]":
+    def _synth(index: int) -> "asyncio.Task[Tuple[CachedSegment, bool]]":
         return asyncio.create_task(
-            synthesize_sentence(sentences[index], voice_id, options, registry, cache)
+            synthesize_sentence(
+                sentences[index], voice_id, options, registry, cache, fallback_voice
+            )
         )
 
-    pending: Optional["asyncio.Task[CachedSegment]"] = None
+    pending: Optional["asyncio.Task[Tuple[CachedSegment, bool]]"] = None
+    fallback_notified = False
     try:
         for i in range(start, total):
             if is_cancelled():
@@ -78,7 +100,7 @@ async def produce_segments(
             if pending is None:
                 pending = _synth(i)
             try:
-                segment = await pending
+                segment, used_fallback = await pending
                 pending = None
             except asyncio.CancelledError:
                 raise
@@ -93,6 +115,19 @@ async def produce_segments(
                     },
                 )
                 continue
+
+            if used_fallback and not fallback_notified:
+                fallback_notified = True
+                await emit(
+                    "error",
+                    {
+                        "code": "FALLBACK_VOICE",
+                        "message": "{} 不可用，已自动回退到 {}（离线兜底）".format(
+                            voice_id, fallback_voice
+                        ),
+                        "fatal": False,
+                    },
+                )
 
             # 先把下一句挂上，再去 emit；这样合成与客户端消费（播放）重叠
             if i + 1 < total:

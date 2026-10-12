@@ -34,8 +34,11 @@ def build_router(runtime: Runtime) -> APIRouter:
         return {
             "ok": True,
             "version": __version__,
-            # 对外暴露**已解析**的默认音色，客户端不需要理解 "auto" 这种占位符
-            "default_voice": runtime.tts.resolve_voice_id(runtime.settings.default_voice),
+            # 对外暴露**已解析**的默认音色（含离线兜底），客户端不需要理解 "auto" 这种占位符
+            "default_voice": runtime.tts.resolve_voice_id(
+                runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
+            ),
+            "fallback_voice": runtime.settings.fallback_voice,
             "backends": runtime.tts.describe(),
             "cache": runtime.cache.stats(),
         }
@@ -48,7 +51,9 @@ def build_router(runtime: Runtime) -> APIRouter:
     async def voices() -> dict:
         items = await runtime.tts.voices()
         return {
-            "default": runtime.tts.resolve_voice_id(runtime.settings.default_voice),
+            "default": runtime.tts.resolve_voice_id(
+                runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
+            ),
             "voices": [voice.to_dict() for voice in items],
         }
 
@@ -86,7 +91,9 @@ def build_router(runtime: Runtime) -> APIRouter:
         except InvalidRequest as exc:
             raise _invalid(str(exc)) from exc
 
-        req.voice = runtime.tts.resolve_voice_id(req.voice)
+        req.voice = runtime.tts.resolve_voice_id(
+            req.voice, fallback=runtime.settings.fallback_voice
+        )
         options = SynthOptions.from_dict(req.options)
         sentences = prepare_sentences(req.text, req.options, runtime.settings.clean)
         if not sentences:
@@ -109,6 +116,9 @@ def build_router(runtime: Runtime) -> APIRouter:
             options,
             queue_size=runtime.settings.prefetch + 2,
             start_index=start_index,
+            fallback_voice=runtime.tts.resolve_voice_id(
+                runtime.settings.fallback_voice, fallback=None
+            ),
         )
         task.start(runtime.tts, runtime.cache)
 

@@ -49,11 +49,17 @@ class TTSRegistry:
             return self._backends.get(backend_id), local
         return self.default(), local
 
-    def resolve_voice_id(self, voice_id: str) -> str:
-        """把 ``say:auto`` 之类的占位符落成具体音色，保证缓存键稳定。"""
+    def resolve_voice_id(self, voice_id: str, fallback: Optional[str] = None) -> str:
+        """把 ``say:auto`` 之类的占位符落成具体音色，保证缓存键稳定。
+
+        若该音色所属后端**不可用**（依赖没装、命令不存在），则改用 ``fallback``。
+        这样默认音色可以放心地用联网的 Edge-TTS，离线时自动退回系统 ``say``。
+        """
 
         backend, local = self.resolve(voice_id)
-        if backend is None:
+        if backend is None or not backend.available():
+            if fallback and fallback != voice_id:
+                return self.resolve_voice_id(fallback)
             return voice_id
         if local in ("", "auto") and hasattr(backend, "default_voice_id"):
             return backend.default_voice_id()

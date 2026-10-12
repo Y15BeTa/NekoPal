@@ -27,12 +27,14 @@ class ReadTask:
         options: SynthOptions,
         queue_size: int = 8,
         start_index: int = 0,
+        fallback_voice: Optional[str] = None,
     ) -> None:
         self.id = task_id
         self.request = request
         self.sentences = sentences
         self.options = options
         self.start_index = max(0, start_index)
+        self.fallback_voice = fallback_voice
         self.created_at = time.time()
         self.cancelled = False
         self.finished = False
@@ -71,6 +73,7 @@ class ReadTask:
                 self.emit,
                 lambda: self.cancelled,
                 start=self.start_index,
+                fallback_voice=self.fallback_voice,
             )
             if not self.cancelled:
                 await self.emit("done", {"elapsed": round(time.time() - started, 3)})
@@ -122,6 +125,7 @@ class TaskRegistry:
         options: SynthOptions,
         queue_size: int = 8,
         start_index: int = 0,
+        fallback_voice: Optional[str] = None,
     ) -> ReadTask:
         task_id = "tsk_" + uuid.uuid4().hex[:8]
         task = ReadTask(
@@ -131,6 +135,7 @@ class TaskRegistry:
             options,
             queue_size=queue_size,
             start_index=start_index,
+            fallback_voice=fallback_voice,
         )
         self._tasks[task_id] = task
         self._order.append(task_id)

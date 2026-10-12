@@ -79,6 +79,72 @@ def test_cancellation_stops_emitting(tmp_path):
     assert len(events) < 3
 
 
+class _RoutingRegistry:
+    """按 voice_id 前缀把请求分派给不同后端，用于验证兜底。"""
+
+    def __init__(self, primary, fallback) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.calls: List[str] = []
+
+    async def synth(self, voice_id, text, options):
+        self.calls.append(voice_id)
+        backend = self.primary if voice_id.startswith("edge:") else self.fallback
+        return await backend.synth(voice_id, text, options)
+
+
+def _collect_with_fallback(registry, tmp_path, fallback_voice, sentences=SENTENCES):
+    cache = AudioCache(tmp_path, max_mb=10)
+    events: List[Tuple[str, Dict[str, Any]]] = []
+
+    async def emit(event_type: str, data: Dict[str, Any]) -> None:
+        events.append((event_type, data))
+
+    async def run() -> None:
+        await produce_segments(
+            sentences,
+            "edge:primary",
+            SynthOptions(),
+            registry,
+            cache,
+            emit,
+            lambda: False,
+            fallback_voice=fallback_voice,
+        )
+
+    asyncio.run(run())
+    return events, cache
+
+
+def test_falls_back_to_offline_voice_and_notifies_once(tmp_path):
+    sentinels = FailingBackend(fail_texts=list(SENTENCES))
+    offline = SilentBackend()
+    registry = _RoutingRegistry(primary=sentinels, fallback=offline)
+
+    events, cache = _collect_with_fallback(registry, tmp_path, "say:offline")
+
+    # FALLBACK_VOICE 是错误**码**，事件类型仍然是 "error"
+    codes = [data.get("code") for kind, data in events if kind == "error"]
+    assert codes.count("FALLBACK_VOICE") == 1, "兜底提示只应出现一次"
+    assert "TTS_FAILED" not in codes, "兜底成功后不应再报合成失败"
+    assert [d["i"] for k, d in events if k == "segment"] == [0, 1, 2]
+
+    # 兜底音频落在后备音色**自己的**缓存键上，主音色键保持为空
+    assert cache.load(cache.key(SENTENCES[0], "say:offline", SynthOptions())) is not None
+    assert cache.load(cache.key(SENTENCES[0], "edge:primary", SynthOptions())) is None
+
+
+def test_no_fallback_still_reports_error(tmp_path):
+    sentinels = FailingBackend(fail_texts=list(SENTENCES))
+    registry = _RoutingRegistry(primary=sentinels, fallback=SilentBackend())
+
+    events, _ = _collect_with_fallback(registry, tmp_path, fallback_voice=None)
+
+    kinds = [kind for kind, _ in events]
+    assert kinds == ["error"] * 3
+    assert all(d["code"] == "TTS_FAILED" for _, d in events)
+
+
 def test_prepare_sentences_cleans_then_splits():
     text = "## 标题\n\n```python\nprint('x')\n```\n\n这是**正文**的第一句话。它是第二句话。"
     sentences = prepare_sentences(text, {}, ["normalize", "skip_code", "strip_markdown"])

@@ -59,8 +59,10 @@ class Settings:
     port: int = 8787
 
     # 默认音色：只允许 official 等级（设计文档 4.7 / G10）
-    # "say:auto" 表示由 say 后端自行挑选一个中文音色
-    default_voice: str = "say:auto"
+    # Edge-TTS 的「晓晓」体验最好；它是联网音色，因此必须有离线兜底。
+    default_voice: str = "edge:zh-CN-XiaoxiaoNeural"
+    # 离线 / 合成失败时自动回退到的音色（同样必须是 official 等级）
+    fallback_voice: str = "say:auto"
     default_backend: str = "say"
 
     cache_dir: Path = field(default_factory=default_cache_dir)
@@ -80,6 +82,7 @@ class Settings:
             "host": self.host,
             "port": self.port,
             "default_voice": self.default_voice,
+            "fallback_voice": self.fallback_voice,
             "default_backend": self.default_backend,
             "cache_dir": str(self.cache_dir),
             "cache_max_mb": self.cache_max_mb,
@@ -95,6 +98,7 @@ def load_settings() -> Settings:
     s.host = _env("NEKOPAL_HOST", s.host)
     s.port = _env_int("NEKOPAL_PORT", s.port)
     s.default_voice = _env("NEKOPAL_DEFAULT_VOICE", s.default_voice)
+    s.fallback_voice = _env("NEKOPAL_FALLBACK_VOICE", s.fallback_voice)
     s.default_backend = _env("NEKOPAL_DEFAULT_BACKEND", s.default_backend)
     s.cache_dir = Path(_env("NEKOPAL_CACHE_DIR", str(s.cache_dir)))
     s.cache_max_mb = _env_int("NEKOPAL_CACHE_MAX_MB", s.cache_max_mb)
