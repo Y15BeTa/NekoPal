@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from typing import Any
 
@@ -78,6 +80,40 @@ def build_router(runtime: Runtime) -> APIRouter:
             detail=data.get("detail"),
         )
 
+    # -- 全服事件流（跟读窗靠它感知「有人从外部推了新任务」）------------
+    @router.get("/events")
+    async def events_stream() -> StreamingResponse:
+        queue: "asyncio.Queue[dict]" = asyncio.Queue(maxsize=32)
+        runtime.subscribe(queue)
+
+        async def generator():
+            try:
+                handshake = json.dumps({"ok": True}, ensure_ascii=False)
+                yield "event: hello\ndata: {}\n\n".format(handshake)
+                while True:
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"  # 心跳，避免中间层掐断空闲连接
+                        continue
+                    name = item.get("event", "message")
+                    payload = {k: v for k, v in item.items() if k != "event"}
+                    yield "event: {}\ndata: {}\n\n".format(
+                        name, json.dumps(payload, ensure_ascii=False)
+                    )
+            finally:
+                runtime.unsubscribe(queue)
+
+        return StreamingResponse(
+            generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     # -- 设置 ------------------------------------------------------------
     @router.get("/settings")
     async def get_settings() -> dict:
@@ -124,6 +160,31 @@ def build_router(runtime: Runtime) -> APIRouter:
             start_index = 0
         start_index = max(0, min(start_index, len(sentences) - 1))
 
+        # -- 重复推送去重 --------------------------------------------------
+        # 插件可能被 opencode 加载成多个实例，同一轮会发多次同样的内容。
+        # 注意：从这里到 tasks.create 之间**不能有 await**，否则并发下会漏判。
+        fingerprint = ""
+        session_key = req.source.get("session_id")
+        if session_key and not req.options.get("no_dedupe"):
+            digest = hashlib.sha1(req.text.encode("utf-8")).hexdigest()
+            fingerprint = "{}|{}".format(session_key, digest)
+            existing_id = runtime.check_duplicate(
+                fingerprint, runtime.settings.dedupe_window
+            )
+            if existing_id is not None:
+                runtime.record(
+                    "read-deduped",
+                    source=str(req.source.get("app") or "unknown"),
+                    task_id=existing_id,
+                )
+                return {
+                    "deduped": True,
+                    "task_id": existing_id,
+                    "sentences": 0,
+                    "segments": 0,
+                    "start_index": 0,
+                }
+
         if req.options.get("interrupt", True):
             runtime.tasks.cancel_all()
 
@@ -138,11 +199,22 @@ def build_router(runtime: Runtime) -> APIRouter:
             ),
         )
         task.start(runtime.tts, runtime.cache)
+        if fingerprint:
+            runtime.remember_read(fingerprint, task.id)
 
+        source = str(req.source.get("app") or req.source.get("kind") or "unknown")
         runtime.record(
             "read",
-            source=str(req.source.get("app") or req.source.get("kind") or "unknown"),
+            source=source,
             voice=req.voice,
+            sentences=len(sentences),
+            chars=len(req.text),
+        )
+        # 广播给所有跟读窗：它们据此自动接上这个任务并开始播放
+        runtime.notify(
+            "task-created",
+            task_id=task.id,
+            source=source,
             sentences=len(sentences),
             chars=len(req.text),
         )

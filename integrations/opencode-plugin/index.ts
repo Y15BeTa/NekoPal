@@ -1,17 +1,20 @@
 /**
  * NekoPal × opencode —— 自动把助手的回答推给 NekoPal 朗读（OpenCode V2 插件）。
  *
- * 工作方式：
- *   1. 订阅 opencode 的公开事件流；
- *   2. 收到 `session.idle`（会话完成）且结果为成功时，定位 sessionID；
- *   3. 用 `ctx.session.context()` 取回会话消息，从后往前找**第一条足够长**的助手消息；
- *   4. 把该消息里 `type === "text"` 的内容块拼起来，POST 给本机 NekoPal。
+ * 触发链（实测采集 2026-10-13）：
+ *   session.inbox.enqueued → session.execution.started
+ *     → session.step.* / session.tool.* / session.text.* …
+ *   session.execution.succeeded      ← 「一轮成功收尾」，本插件在此动作
+ *
+ * ⚠️ 官方文档示例里写的 `session.idle` 在这版 opencode 中**不存在**；
+ *    实测存在的是 `session.execution.succeeded`。因此触发器同时匹配两者，
+ *    并在收到**未知事件类型**时上报类型与负载样本，便于日后适配。
  *
  * 设计取舍：
- *   - **不 import `@opencode/plugin`**：V2 插件就是「默认导出带 id 与 setup 的对象」，
+ *   - **不 import `@opencode/plugin`**：V2 插件即「默认导出带 id 与 setup 的对象」，
  *     少一个依赖就少一处加载失败的可能。
- *   - **不猜事件负载形状**：`session.idle` 的具体字段在 OpenAPI 里是不透明的，
- *     因此用递归搜索定位 sessionID，并对找不到的情况给出可诊断的日志。
+ *   - **不猜事件负载形状**：负载字段在 OpenAPI 中不透明，因此递归定位 sessionID，
+ *     并把定位失败时的负载样本上报到 `/api/activity`（而不是让人去翻日志）。
  *   - **只发往本机**：不经过任何第三方服务。
  */
 
@@ -20,12 +23,25 @@ const DEBUG = process.env.NEKOPAL_DEBUG === "1";
 /** 短于此长度的回答不朗读（避免"好的""已完成"这类噪音） */
 const MIN_CHARS = Number(process.env.NEKOPAL_MIN_CHARS ?? 60);
 const MAX_TRACKED = 32;
+const MAX_REPORTED_TYPES = 60;
+const DUMP_LIMIT = 1200;
 
 type AnyRecord = Record<string, any>;
 
-/** 递归查找会话 ID；先看键名，再看形如 `ses_xxx` 的字符串值。 */
+/** 一轮结束的触发事件：实测名 + 文档里的旧名（兼容）。 */
+const TRIGGER = /(^|\.)(execution\.succeeded|idle)$/;
+
+function dump(value: unknown, limit = DUMP_LIMIT): string {
+  try {
+    return JSON.stringify(value ?? null).slice(0, limit);
+  } catch {
+    return "<unserializable>";
+  }
+}
+
+/** 递归查找会话 ID：先看键名，再看 `{session:{id}}`，最后看形如 `ses_xxx` 的字符串。 */
 function findSessionID(value: unknown, depth = 0, budget = { visits: 0 }): string | undefined {
-  if (value == null || depth > 6 || budget.visits > 4000) return undefined;
+  if (value == null || depth > 7 || budget.visits > 6000) return undefined;
   budget.visits += 1;
 
   if (typeof value === "string") {
@@ -42,11 +58,19 @@ function findSessionID(value: unknown, depth = 0, budget = { visits: 0 }): strin
   }
 
   const record = value as AnyRecord;
+
+  // 1) 直接键名：sessionID / session_id / sessionId
   for (const key of Object.keys(record)) {
     if (/^session_?id$/i.test(key) && typeof record[key] === "string") {
       return record[key] as string;
     }
   }
+  // 2) 嵌套形态：{ session: { id: "..." } }
+  const nested = record.session;
+  if (nested && typeof nested === "object" && typeof (nested as AnyRecord).id === "string") {
+    return (nested as AnyRecord).id as string;
+  }
+  // 3) 深度搜索
   for (const key of Object.keys(record)) {
     const hit = findSessionID(record[key], depth + 1, budget);
     if (hit) return hit;
@@ -75,6 +99,25 @@ function latestReadableAnswer(messages: AnyRecord[]): { id: string; text: string
   return undefined;
 }
 
+/**
+ * 向 NekoPal 汇报一次活动。
+ *
+ * 插件的成功路径是静默的，出了问题很难查 —— 所以把关键节点记到 NekoPal 的
+ * `/api/activity`，用 `GET /api/activity` 就能看到「到底走到哪一步」。
+ * 汇报失败绝不影响朗读主流程。
+ */
+async function report(event: string, detail?: unknown): Promise<void> {
+  try {
+    await fetch(`${BASE}/api/activity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, source: "opencode-plugin", detail }),
+    });
+  } catch {
+    /* 忽略：NekoPal 没起也不该影响 opencode */
+  }
+}
+
 async function push(text: string, sessionID: string): Promise<void> {
   const response = await fetch(`${BASE}/api/read`, {
     method: "POST",
@@ -98,29 +141,9 @@ async function push(text: string, sessionID: string): Promise<void> {
 }
 
 /**
- * 向 NekoPal 汇报一次活动。
- *
- * 插件的成功路径是静默的，出了问题很难查 —— 所以把关键节点记到 NekoPal 的
- * `/api/activity`，用 `GET /api/activity` 就能看到「到底走到哪一步」。
- * 汇报失败绝不影响朗读主流程。
- */
-async function report(event: string, detail?: unknown): Promise<void> {
-  try {
-    await fetch(`${BASE}/api/activity`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event, source: "opencode-plugin", detail }),
-    });
-  } catch {
-    /* 忽略：NekoPal 没起也不该影响 opencode */
-  }
-}
-
-/**
  * 加载探针：模块一被求值就上报一次。
  *
  * 用来区分三种情况——「插件没被加载」「加载了但 setup 没跑」「setup 跑了但收不到事件」。
- * 排查集成问题时这是第一个面包屑。
  */
 void report("module-loaded", { base: BASE, minChars: MIN_CHARS });
 
@@ -130,7 +153,6 @@ export default {
   setup(ctx: AnyRecord) {
     const controller = new AbortController();
     const seen: string[] = [];
-    //: 事件类型词表（去重、限量）—— V2 的事件名可能与 V1 不同，先摸清楚
     const reportedTypes = new Set<string>();
 
     void report("plugin-ready", { base: BASE, minChars: MIN_CHARS });
@@ -139,26 +161,21 @@ export default {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         const type = (event as AnyRecord)?.type;
 
-        if (typeof type === "string" && !reportedTypes.has(type) && reportedTypes.size < 60) {
+        // 事件类型词表 + 负载样本：opencode 改事件结构时靠它快速适配
+        if (typeof type === "string" && !reportedTypes.has(type) && reportedTypes.size < MAX_REPORTED_TYPES) {
           reportedTypes.add(type);
-          void report("event-type", { type });
+          void report("event-type", { type, sample: dump(event, 400) });
         }
         if (DEBUG) console.log("[nekopal] event:", type);
 
-        // 兼容改名：任何以 .idle 结尾的事件都当作「会话完成」
-        const isIdle = typeof type === "string" && /(^|\.)idle$/.test(type);
-        if (!isIdle) continue;
+        if (typeof type !== "string" || !TRIGGER.test(type)) continue;
 
-        const payload = (event as AnyRecord).data ?? (event as AnyRecord).properties ?? {};
-        await report("idle", { type, outcome: payload.outcome ?? null });
-        // 只在成功的收尾动作上朗读；失败/中断不读
-        if (payload.outcome && payload.outcome !== "succeeded") continue;
+        const payload = (event as AnyRecord).data ?? (event as AnyRecord).properties ?? event;
+        await report("trigger", { type, payload: dump(payload) });
 
         const sessionID = findSessionID(event);
         if (!sessionID) {
-          const dump = JSON.stringify(event ?? {}).slice(0, 600);
-          if (DEBUG) console.warn("[nekopal] 未能从事件中定位 sessionID：", dump);
-          await report("no-session-id", { dump });
+          await report("no-session-id", { type, dump: dump(event) });
           continue;
         }
 
@@ -176,7 +193,7 @@ export default {
 
           await push(answer.text, sessionID);
         } catch (error) {
-          console.warn("[nekopal] 处理 session.idle 失败:", String(error));
+          console.warn("[nekopal] 处理完成事件失败:", String(error));
           await report("error", { sessionID, message: String(error).slice(0, 300) });
         }
       }

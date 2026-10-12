@@ -203,6 +203,8 @@ export class Reader {
 
   // ---- 内部 ----------------------------------------------------------
   _onEnded() {
+    // 没有任何活动段时的 ended 不是"读完了"（例如解锁自动播放用的静音音频）
+    if (this.current < 0) return;
     this.sentenceEls[this.current]?.classList.add('done');
     const next = this.current + 1;
     if (next < this.sentences.length) {

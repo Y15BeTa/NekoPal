@@ -75,6 +75,9 @@ class Settings:
     # 预合成队列的前瞻段数（设计文档 5.4）
     prefetch: int = 3
 
+    #: 同一内容源在这么短时间内重复推送同一段文本，视为重复触发（插件被加载多实例）
+    dedupe_window: float = 10.0
+
     web_dir: Optional[Path] = field(default_factory=default_web_dir)
 
     def to_dict(self) -> dict:
@@ -90,6 +93,7 @@ class Settings:
             "rate": self.rate,
             "auto_scroll": self.auto_scroll,
             "prefetch": self.prefetch,
+            "dedupe_window": self.dedupe_window,
         }
 
 
@@ -104,6 +108,7 @@ def load_settings() -> Settings:
     s.cache_max_mb = _env_int("NEKOPAL_CACHE_MAX_MB", s.cache_max_mb)
     s.rate = _env_float("NEKOPAL_RATE", s.rate)
     s.prefetch = max(1, _env_int("NEKOPAL_PREFETCH", s.prefetch))
+    s.dedupe_window = _env_float("NEKOPAL_DEDUPE_WINDOW", s.dedupe_window)
 
     web = os.environ.get("NEKOPAL_WEB_DIR")
     if web:

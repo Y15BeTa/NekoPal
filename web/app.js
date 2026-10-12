@@ -1,4 +1,4 @@
-// NekoPal 跟读窗前端的胶水层：音色加载 + 发起朗读 + 消费 SSE
+// NekoPal 跟读窗前端的胶水层：音色加载 + 发起朗读 + 消费 SSE + 响应外部推送
 import { Reader } from './player.js';
 
 const $ = (id) => document.getElementById(id);
@@ -15,17 +15,57 @@ const els = {
   status: $('status'),
   reader: $('reader'),
   audio: $('audio'),
+  soundGate: $('soundGate'),
+  soundGateBtn: $('soundGateBtn'),
 };
 
-const setStatus = (text) => { els.status.textContent = text; };
+//: 当前正在读的任务；用于区分「自己点的」与「外部推来的」
+let currentTaskId = null;
+//: 浏览器是否已解锁自动播放
+let audioUnlocked = false;
+
+function setStatus(text) {
+  els.status.textContent = text;
+  // 播放被浏览器拦下时，把解锁提示亮出来
+  if (typeof text === 'string' && text.includes('需要先与页面交互')) showSoundGate();
+}
+
+function showSoundGate() {
+  if (!audioUnlocked && els.soundGate) els.soundGate.hidden = false;
+}
+
+/**
+ * 解锁自动播放。
+ *
+ * 浏览器规定：媒体播放要么发生在用户手势里，要么该页面已被用户交互过。
+ * opencode 的推送是「异步」到达的，不可能落在手势里 —— 所以必须提前点一次。
+ */
+async function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  document.body.classList.add('unlocked');
+  if (els.soundGate) els.soundGate.hidden = true;
+
+  try {
+    // 播放一段 0 字节静音 WAV：满足"在用户手势中播放过"的条件，又不出声。
+    // 用**独立的 Audio 对象**，避免污染主播放器的状态（曾导致误报"已读完"）。
+    const primer = new Audio(
+      'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
+    );
+    primer.muted = true;
+    await primer.play();
+    primer.pause();
+    setStatus('声音已启用 · opencode 回答完就会自动朗读');
+  } catch (err) {
+    setStatus('解锁失败，请直接点一次「朗读」');
+  }
+}
 
 const reader = new Reader({
   container: els.reader,
   audio: els.audio,
   onStatus: setStatus,
 });
-
-let stream = null;
 
 function closeStream() {
   if (stream) { stream.close(); stream = null; }
@@ -75,8 +115,12 @@ async function loadVoices() {
   }
 }
 
+//: 当前任务的 SSE
+let stream = null;
+
 function subscribe(taskId, startIndex) {
   closeStream();
+  currentTaskId = taskId;
   stream = new EventSource('/api/read/' + taskId + '/events');
 
   stream.addEventListener('plan', (event) => {
@@ -138,8 +182,36 @@ async function startRead(text) {
   }
 
   const data = await res.json();
+  if (data.deduped) {
+    setStatus('这段内容刚刚已经在读了，忽略重复请求');
+    return;
+  }
   setStatus('共 ' + data.sentences + ' 句，正在合成…');
   subscribe(data.task_id, data.start_index || 0);
+}
+
+/**
+ * 订阅全服事件流。
+ *
+ * 这是「opencode 回答完自动朗读」能被听见的关键：插件是绕开浏览器直接 POST 的，
+ * 跟读窗必须被**通知**才知道有新任务，然后自己接上去播放。
+ */
+function connectLive() {
+  const live = new EventSource('/api/events');
+
+  live.addEventListener('task-created', (event) => {
+    let data = {};
+    try { data = JSON.parse(event.data); } catch (err) { return; }
+    if (!data.task_id || data.task_id === currentTaskId) return; // 自己发起的，跳过
+
+    setStatus('收到外部推送（' + (data.source || '?') + '，' + (data.sentences || 0) + ' 句），自动接上…');
+    reader.reset();
+    subscribe(data.task_id, 0);
+  });
+
+  live.addEventListener('error', () => {
+    // EventSource 自带重连；这里不打扰用户
+  });
 }
 
 // ---- 事件绑定 --------------------------------------------------------
@@ -147,6 +219,7 @@ els.readBtn.addEventListener('click', () => startRead(els.input.value));
 els.clearBtn.addEventListener('click', () => {
   els.input.value = '';
   closeStream();
+  currentTaskId = null;
   reader.reset();
   els.reader.innerHTML = '<p class="empty">还没有内容。</p>';
   setStatus('就绪');
@@ -156,7 +229,13 @@ els.prev.addEventListener('click', () => reader.prev());
 els.next.addEventListener('click', () => reader.next());
 els.rate.addEventListener('change', () => reader.setRate(parseFloat(els.rate.value)));
 
-// 粘贴后自动聚焦，方便直接点「朗读」
+// 用户第一次点页面任意处即解锁自动播放
+document.addEventListener('pointerdown', unlockAudio, { once: true });
+els.soundGateBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  unlockAudio();
+});
+
 els.input.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
     startRead(els.input.value);
@@ -164,3 +243,5 @@ els.input.addEventListener('keydown', (event) => {
 });
 
 loadVoices();
+connectLive();
+showSoundGate();

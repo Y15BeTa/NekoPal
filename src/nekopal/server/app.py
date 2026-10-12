@@ -30,6 +30,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app = FastAPI(title="NekoPal", version=__version__, lifespan=lifespan)
     app.state.runtime = runtime
 
+    @app.middleware("http")
+    async def no_cache_web_assets(request: Request, call_next):
+        """前端资源一律要求重新校验。
+
+        否则改完 `web/` 后浏览器会继续用旧文件，出现「界面更新了但行为还是旧的」
+        这类极难排查的问题（就踩过一次）。
+        """
+
+        response = await call_next(request)
+        if not request.url.path.startswith("/api"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.exception_handler(HTTPException)
     async def http_error_handler(request: Request, exc: HTTPException) -> JSONResponse:
         """把错误统一成 ``{code, message}``（设计文档 4.2 错误码）。"""
