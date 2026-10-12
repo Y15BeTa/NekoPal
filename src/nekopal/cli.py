@@ -377,11 +377,14 @@ def _cmd_convert(args: argparse.Namespace) -> int:
 def _cmd_up(args: argparse.Namespace) -> int:
     """一键启动：变声服务（若已配置）→ 后端 → 原生窗口。
 
-    设计成「点击才启动」而不是开机自启 —— 变声服务带 torch，常驻要几百 MB，
-    不值得为它拖慢开机。
+    **关掉窗口 = 全部关闭**：``run_app`` 返回后（窗口关闭时），本次自己拉起来的
+    变声服务也会被停掉 —— 后端本来就由 ``run_app`` 的 `finally` 负责。
+    所以只需要**一个 App**：双击打开，关掉窗口就干净了，不必再有专门的关闭入口。
+
+    设计成「点击才启动」而不是开机自启 —— 变声服务带 torch，常驻要几百 MB。
     """
 
-    from nekopal.desktop import ensure_rvc_service, run_app
+    from nekopal.desktop import ensure_rvc_service, run_app, stop_rvc_service
 
     settings = load_settings()
     if args.host:
@@ -389,8 +392,12 @@ def _cmd_up(args: argparse.Namespace) -> int:
     if args.port:
         settings.port = args.port
 
-    ensure_rvc_service(verbose=not args.quiet)
-    return run_app(settings, hidden=args.hidden, width=args.width, height=args.height)
+    ours = ensure_rvc_service(verbose=not args.quiet)
+    try:
+        return run_app(settings, hidden=args.hidden, width=args.width, height=args.height)
+    finally:
+        if ours:
+            stop_rvc_service(verbose=not args.quiet)
 
 
 def _cmd_down(args: argparse.Namespace) -> int:

@@ -57,11 +57,18 @@ def default_rvc_python() -> Path:
     return Path.home() / ".local" / "share" / "nekopal" / "rvc-venv" / "bin" / "python"
 
 
-def ensure_rvc_service(verbose: bool = True) -> bool:
-    """需要时把常驻变声服务拉起来（已跑就跳过）。
+#: 变声服务的进程特征（`stop_all` / `stop_rvc_service` 用它匹配）
+RVC_SERVE_PATTERN = "integrations/rvc/serve.py"
 
-    只有当你配了 ``NEKOPAL_RVC_ENDPOINT`` 且本机装了 RVC 的 venv 时才动手；
-    否则静默跳过（不配变声的人不受影响）。
+
+def ensure_rvc_service(verbose: bool = True) -> bool:
+    """需要时把常驻变声服务拉起来。
+
+    返回值是 **「是不是我们拉起来的」** —— 是的话，调用方收尾时要负责停掉它，
+    这样"关掉窗口 = 全部关闭"才成立（见 ``cli._cmd_up``）。
+
+    只有配了 ``NEKOPAL_RVC_ENDPOINT`` 且本机装了 RVC 的 venv 时才动手；
+    否则静默跳过（不配变声的人完全不受影响）。
     """
 
     endpoint = (os.environ.get("NEKOPAL_RVC_ENDPOINT") or "").strip()
@@ -71,8 +78,8 @@ def ensure_rvc_service(verbose: bool = True) -> bool:
     health = endpoint.rstrip("/") + "/health"
     if _url_alive(health):
         if verbose:
-            print("变声服务已在运行")
-        return True
+            print("变声服务已在运行（不是本次拉起的，退出时也不会动它）")
+        return False  # 别人已经在跑，不归我们管
 
     rvc_python = default_rvc_python()
     script = repo_root() / "integrations" / "rvc" / "serve.py"
@@ -102,7 +109,18 @@ def ensure_rvc_service(verbose: bool = True) -> bool:
         time.sleep(0.25)
 
     if verbose:
-        print("变声服务启动超时 —— 朗读仍可用，只是变声会退回本地推理（较慢）")
+        print("变声服务启动超时 —— 朗读仍可用，变声会退回本地推理（较慢）")
+    return True  # 进程是我们起的，收尾时照样要停
+
+
+def stop_rvc_service(verbose: bool = True) -> bool:
+    """**只**停变声服务（不碰窗口与后端）。返回是否真的停掉了。"""
+
+    result = subprocess.run(["pkill", "-f", RVC_SERVE_PATTERN], capture_output=True)
+    if result.returncode == 0:
+        if verbose:
+            print("已停止变声服务")
+        return True
     return False
 
 
@@ -114,7 +132,7 @@ STOP_PATTERNS = (
     ("nekopal app", "原生窗口"),
     ("nekopal up", "原生窗口（一键启动）"),
     ("nekopal serve", "NekoPal 服务"),
-    ("integrations/rvc/serve.py", "变声服务"),
+    (RVC_SERVE_PATTERN, "变声服务"),
 )
 
 
