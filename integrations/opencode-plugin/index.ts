@@ -116,23 +116,41 @@ async function report(event: string, detail?: unknown): Promise<void> {
   }
 }
 
+/**
+ * 加载探针：模块一被求值就上报一次。
+ *
+ * 用来区分三种情况——「插件没被加载」「加载了但 setup 没跑」「setup 跑了但收不到事件」。
+ * 排查集成问题时这是第一个面包屑。
+ */
+void report("module-loaded", { base: BASE, minChars: MIN_CHARS });
+
 export default {
   id: "nekopal",
 
   setup(ctx: AnyRecord) {
     const controller = new AbortController();
     const seen: string[] = [];
+    //: 事件类型词表（去重、限量）—— V2 的事件名可能与 V1 不同，先摸清楚
+    const reportedTypes = new Set<string>();
 
     void report("plugin-ready", { base: BASE, minChars: MIN_CHARS });
 
     void (async () => {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         const type = (event as AnyRecord)?.type;
+
+        if (typeof type === "string" && !reportedTypes.has(type) && reportedTypes.size < 60) {
+          reportedTypes.add(type);
+          void report("event-type", { type });
+        }
         if (DEBUG) console.log("[nekopal] event:", type);
-        if (type !== "session.idle") continue;
+
+        // 兼容改名：任何以 .idle 结尾的事件都当作「会话完成」
+        const isIdle = typeof type === "string" && /(^|\.)idle$/.test(type);
+        if (!isIdle) continue;
 
         const payload = (event as AnyRecord).data ?? (event as AnyRecord).properties ?? {};
-        await report("idle", { outcome: payload.outcome ?? null });
+        await report("idle", { type, outcome: payload.outcome ?? null });
         // 只在成功的收尾动作上朗读；失败/中断不读
         if (payload.outcome && payload.outcome !== "succeeded") continue;
 
