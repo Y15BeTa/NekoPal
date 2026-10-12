@@ -54,7 +54,7 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 | **原生窗口外壳** | `nekopal app`：不开浏览器、**无需点击**即可自动朗读 | ✅ 可用 |
 | **导出音频** | `nekopal export`：wav / m4a **零额外依赖**（mp3 需 ffmpeg） | ✅ 可用 |
 | **音色包 / 角色包（只做接口）** | `nekopal packs`：扫描、校验、模板；**不内置任何素材** | ✅ 可用 |
-| **变声后端（RVC / DDSP-SVC）** | `nekopal convert`：`base_voice 合成 → 变声命令`，实测跑通要楽奈音色 | ✅ **可用**（⚠️ 每句约 5.5s，待做常驻服务） |
+| **变声后端（RVC / DDSP-SVC）** | `nekopal convert`：`base_voice 合成 → 变声命令`，实测跑通要楽奈音色 | ✅ **可用**（常驻服务下 RTF 0.39） |
 | **开机自启** | `nekopal autostart install`（macOS LaunchAgent） | ✅ 可用 |
 | **导出 mp3（通勤播客）** | 一键把整篇导出为音频文件 | 🔜 Phase 2 |
 | **文件模式** | 打开 `.md`，跟读窗自渲染整篇 | 🔜 Phase 2 |
@@ -108,6 +108,21 @@ uv run nekopal packs list                   # 扫到了什么、哪些被跳过�
 > 或仓库内的 `voices/`、`characters/`（素材已被 `.gitignore` 排除）。
 > 想用什么形象/音色由你决定，合规责任也在你自己 —— 详见
 > [`docs/竞品与合规调研.md`](docs/竞品与合规调研.md) 第 10 节「虚拟形象来源与条款」。
+
+**变声（RVC / DDSP-SVC 这类社区角色模型）**：它们多是「音频 → 音频」，不能直接喂文本，
+所以走「先合成、再变声」的组合管线。完整步骤见
+[`integrations/rvc/README.md`](integrations/rvc/README.md)：
+
+```bash
+# 一次性：装变声引擎（独立 venv）
+export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk   # 本机 27.0 SDK 坏了
+uv venv ~/.local/share/nekopal/rvc-venv --python 3.11
+uv pip install --python ~/.local/share/nekopal/rvc-venv/bin/python \
+    infer-rvc-python "setuptools<81" "transformers<5"
+
+# 常驻变声服务（强烈推荐：单句 5.5s → 1.67s）
+~/.local/share/nekopal/rvc-venv/bin/python integrations/rvc/serve.py --port 7899
+```
 
 **默认音色**：开箱只用**明确可用的来源**，无需任何额外素材——
 默认是 **Edge-TTS「晓晓」**（联网、带词级时间戳），并配了**离线兜底**：断网或后端不可用时**逐句自动回退**到系统 `say`，不会没声音。

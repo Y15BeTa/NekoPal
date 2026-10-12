@@ -17,6 +17,7 @@ const els = {
   audio: $('audio'),
   soundGate: $('soundGate'),
   soundGateBtn: $('soundGateBtn'),
+  packWarn: $('packWarn'),
   activityPanel: $('activityPanel'),
   activityList: $('activityList'),
   activityRefresh: $('activityRefresh'),
@@ -62,6 +63,38 @@ function setStatus(text) {
 
 function showSoundGate() {
   if (!audioUnlocked && els.soundGate) els.soundGate.hidden = false;
+}
+
+/**
+ * 显示「音色包没被加载」的原因。
+ *
+ * 后端一直在返回 `pack_problems`，但界面从来没展示过 —— 结果用户的包坏掉时
+ * 毫无提示，只能去跑 `nekopal packs list` 才知道。这是审计发现的一个可用性缺口。
+ */
+function renderPackProblems(problems) {
+  const box = els.packWarn;
+  if (!box) return;
+
+  if (!problems || !problems.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+
+  box.hidden = false;
+  box.innerHTML =
+    '<div class="warn-head">⚠️ 有 ' + problems.length + ' 个音色包/角色包没被加载</div>' +
+    '<ul class="warn-list">' +
+    problems
+      .map(function (item) {
+        return (
+          '<li><code>' + escapeHtml(item.path) + '</code>' +
+          '<div class="warn-reason">' + escapeHtml(item.reason) + '</div></li>'
+        );
+      })
+      .join('') +
+    '</ul>' +
+    '<div class="warn-foot">修好之后运行 <code>nekopal packs list</code> 复查，或在终端重启服务。</div>';
 }
 
 /**
@@ -206,6 +239,7 @@ async function loadVoices() {
       || all[0];
     if (preferred) els.voice.value = preferred.id;
 
+    renderPackProblems(data.pack_problems || []);
     setStatus('就绪 · ' + all.length + ' 个音色');
   } catch (err) {
     setStatus('音色加载失败：' + err.message);
