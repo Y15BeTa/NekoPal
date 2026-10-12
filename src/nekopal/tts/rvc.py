@@ -7,17 +7,17 @@ RVC / DDSP-SVC 这类模型是**音频 → 音频**（声音转换），不能�
 
 音色包写法（放在 `~/.config/nekopal/voices/<id>/voice.yaml`）::
 
-    id: rana
-    name: "要楽奈（变声）"
+    id: my-converted
+    name: "我的变声音色"
     backend: rvc
-    license: unofficial            # 社区模型如实标 unofficial
+    license: unofficial            # 未获公开授权的模型如实标 unofficial
     commercial_ok: false
     redistributable: false
 
     rvc:
       base_voice: edge:zh-CN-XiaoxiaoNeural   # 先用谁合成（必填）
-      model: /abs/path/rana.pth               # 必填
-      index: /abs/path/rana.index             # 可选
+      model: /abs/path/voice.pth               # 必填
+      index: /abs/path/voice.index             # 可选
       command: ["python", "infer.py", "{input}", "{output}", "--model", "{model}"]  # 可选，覆盖全局
 
 **本项目不内置模型、也不猜任何工具的 API**：变声怎么跑由命令模板决定

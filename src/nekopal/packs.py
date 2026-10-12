@@ -428,8 +428,8 @@ sovits:
 # backend: rvc
 # rvc:
 #   base_voice: edge:zh-CN-XiaoxiaoNeural   # 先用谁合成（必填）
-#   model: rana.pth                          # 你下载的变声模型（必填，放本目录）
-#   index: rana.index                        # 可选
+#   model: voice.pth                         # 你自己的变声模型（必填，放本目录）
+#   index: voice.index                       # 可选
 #   command: ["python", "infer.py", "{input}", "{output}", "--model", "{model}"]
 """
 

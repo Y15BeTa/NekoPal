@@ -51,8 +51,8 @@ export NEKOPAL_RVC_COMMAND='~/.local/share/nekopal/rvc-venv/bin/python \
 自检：
 
 ```bash
-nekopal convert show                 # 看当前命令
-nekopal convert test --pack rana     # 合成 → 变声 → 报告
+nekopal convert show                      # 看当前命令
+nekopal convert test --pack my-converted  # 合成 → 变声 → 报告
 ```
 
 ---
@@ -60,34 +60,34 @@ nekopal convert test --pack rana     # 合成 → 变声 → 报告
 ## 三、建音色包
 
 ```bash
-nekopal packs init voice rana
-# 然后把模型拷进去
-cp ~/Downloads/rana.pth  ~/.config/nekopal/voices/rana/
-cp ~/Downloads/rana.index ~/.config/nekopal/voices/rana/   # 可选
+nekopal packs init voice my-converted
+# 然后把你的模型拷进去
+cp ~/Downloads/voice.pth   ~/.config/nekopal/voices/my-converted/
+cp ~/Downloads/voice.index ~/.config/nekopal/voices/my-converted/   # 可选
 ```
 
-编辑 `~/.config/nekopal/voices/rana/voice.yaml`：
+编辑 `~/.config/nekopal/voices/my-converted/voice.yaml`：
 
 ```yaml
-id: rana
-name: "要楽奈"
+id: my-converted
+name: "我的变声音色"
 backend: rvc
 lang: ["zh", "ja"]
 tags: ["community"]
-license: unofficial             # 社区模型如实填写
+license: unofficial             # 未获公开授权的模型如实填写
 commercial_ok: false
 redistributable: false
 rvc:
   base_voice: edge:zh-CN-XiaoxiaoNeural
-  model: rana.pth
-  index: rana.index             # 没有就删掉这行
+  model: voice.pth
+  index: voice.index             # 没有就删掉这行
 ```
 
 最后：
 
 ```bash
-nekopal packs list       # 应该看到 rvc:rana，没有「已跳过」
-nekopal convert test --pack rana
+nekopal packs list       # 应该看到 rvc:my-converted，没有「已跳过」
+nekopal convert test --pack my-converted
 ```
 
 ---
@@ -146,7 +146,7 @@ export NEKOPAL_RVC_ENDPOINT=http://127.0.0.1:7899
 - 健康检查：`curl http://127.0.0.1:7899/health`
 - `--endpoint-only` 可以禁止回退（调试用）
 
-> ⚠️ 换音色时（比如从要楽奈切到 VCTK）服务会**重新加载模型**（几秒），
+> ⚠️ 换音色时（从一个变声音色切到另一个）服务会**重新加载模型**（几秒），
 > 之后该音色的每一句都是 1.67s。
 
 - 变声**不产出词级时间戳** → 高亮自动降级为**句级**（这是正常的）。

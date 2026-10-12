@@ -46,22 +46,22 @@ nekopal convert test      # 自检：合成 → 变声 → 报告（附排查清
 **② 再写音色包**：
 
 ```yaml
-id: rana
-name: "要楽奈（变声）"
+id: my-converted
+name: "我的变声音色"
 backend: rvc                    # ← 关键
 lang: ["zh"]
 tags: ["community"]
-license: unofficial             # 社区模型如实标 unofficial（界面会打黄标）
-commercial_ok: false
+license: unofficial             # 未获公开授权的模型如实标 unofficial（界面会打黄标）
+commercial_ok: false            # 别替原作者许诺，自己按实际情况填
 redistributable: false
 rvc:
   base_voice: edge:zh-CN-XiaoxiaoNeural   # 先用谁合成（必填）
-  model: rana.pth                          # 你下载的变声模型（必填，放本目录）
-  index: rana.index                        # 可选
+  model: voice.pth                         # 你自己的变声模型（必填，放本目录）
+  index: voice.index                       # 可选（有些模型不带 index）
   # command: [...]                         # 可选，覆盖全局命令
 ```
 
-**③ 验证**：`nekopal packs list` 看到它 → `nekopal convert test --pack rana` → 通了就能在跟读窗里选。
+**③ 验证**：`nekopal packs list` 看到它 → `nekopal convert test --pack my-converted` → 通了就能在跟读窗里选。
 
 > ⚠️ 变声不产出**词级时间戳**，所以高亮会自动降级为**句级**（这是正常的，不是坏了）。
 
@@ -130,5 +130,7 @@ say:
 ## 合规提醒
 
 - ❌ 请勿把**受版权保护的动漫/影视/名人语音素材**提交到本仓库或公开分享。
-- ✅ 推荐来源：自己录音、明确授权（如 CC0）的公开语音数据集。
+- ✅ 推荐来源：自己录音、明确授权（如 CC0）的公开语音数据集；或**利用規約明确的免费音声素材角色**
+  （例如「つくよみちゃん」——其規約允许二次使用。调研发现这类合法音源反而比未授权同人更流行，见 §4.4）。
+- 📌 本项目**不提供**任何第三方模型的下载入口或清单 —— 素材请自行准备，并自行确认授权。
 - 如果你的音色包会公开分发，请确保 `license` 字段如实填写。

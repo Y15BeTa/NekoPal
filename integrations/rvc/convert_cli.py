@@ -15,7 +15,7 @@ NekoPal 的变声后端（`nekopal convert`）只约定这一件事，所以本�
 
 用法::
 
-    python convert_cli.py <输入.wav> <输出.wav> --model /path/rana.pth [--index /path/rana.index] [--pitch 0]
+    python convert_cli.py <输入.wav> <输出.wav> --model /path/voice.pth [--index /path/voice.index] [--pitch 0]
 """
 
 from __future__ import annotations
