@@ -11,12 +11,15 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from nekopal import __version__
 from nekopal.config import Settings, load_settings
@@ -37,6 +40,95 @@ def backend_alive(base: str, timeout: float = 0.6) -> bool:
             return True
     except (urllib.error.URLError, OSError):
         return False
+
+
+def _url_alive(url: str, timeout: float = 0.6) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout):
+            return True
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def default_rvc_python() -> Path:
+    override = os.environ.get("NEKOPAL_RVC_PYTHON")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".local" / "share" / "nekopal" / "rvc-venv" / "bin" / "python"
+
+
+def ensure_rvc_service(verbose: bool = True) -> bool:
+    """需要时把常驻变声服务拉起来（已跑就跳过）。
+
+    只有当你配了 ``NEKOPAL_RVC_ENDPOINT`` 且本机装了 RVC 的 venv 时才动手；
+    否则静默跳过（不配变声的人不受影响）。
+    """
+
+    endpoint = (os.environ.get("NEKOPAL_RVC_ENDPOINT") or "").strip()
+    if not endpoint:
+        return False
+
+    health = endpoint.rstrip("/") + "/health"
+    if _url_alive(health):
+        if verbose:
+            print("变声服务已在运行")
+        return True
+
+    rvc_python = default_rvc_python()
+    script = repo_root() / "integrations" / "rvc" / "serve.py"
+    if not rvc_python.is_file() or not script.is_file():
+        if verbose:
+            print("（没找到变声环境，跳过；朗读会在没有变声的情况下工作）")
+        return False
+
+    try:
+        port = urlparse(endpoint).port or 7899
+    except ValueError:
+        port = 7899
+
+    if verbose:
+        print("启动变声服务…")
+    subprocess.Popen(
+        [str(rvc_python), str(script), "--port", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(repo_root()),
+    )
+    for _ in range(120):  # 最多等 30 秒（首次加载模型较慢）
+        if _url_alive(health):
+            if verbose:
+                print("变声服务就绪")
+            return True
+        time.sleep(0.25)
+
+    if verbose:
+        print("变声服务启动超时 —— 朗读仍可用，只是变声会退回本地推理（较慢）")
+    return False
+
+
+def stop_all(verbose: bool = True) -> int:
+    """停掉 NekoPal 相关进程（窗口 / 后端 / 变声服务）。"""
+
+    patterns = (
+        ("nekopal app", "原生窗口"),
+        ("nekopal serve", "NekoPal 服务"),
+        ("integrations/rvc/serve.py", "变声服务"),
+    )
+    stopped = 0
+    for pattern, label in patterns:
+        result = subprocess.run(["pkill", "-f", pattern], capture_output=True)
+        if result.returncode == 0:
+            stopped += 1
+            if verbose:
+                print("已停止 {}".format(label))
+    if stopped == 0 and verbose:
+        print("没有正在运行的 NekoPal 进程")
+    return stopped
+
+
+def repo_root() -> Path:
+    # src/nekopal/desktop.py -> src/nekopal -> src -> <repo>
+    return Path(__file__).resolve().parents[2]
 
 
 def spawn_backend(settings: Settings) -> subprocess.Popen:

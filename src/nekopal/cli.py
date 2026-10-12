@@ -1,6 +1,8 @@
 """命令行入口。
 
     nekopal serve          启动本地服务
+    nekopal up             一键启动（变声服务 + 后端 + 原生窗口）
+    nekopal down           停掉窗口、后端与变声服务
     nekopal app            打开原生窗口（桌面外壳）
     nekopal open           在浏览器打开跟读窗
     nekopal read "文字"    命令行直接朗读（本机播放）
@@ -372,6 +374,34 @@ def _cmd_convert(args: argparse.Namespace) -> int:
     return asyncio.run(run())
 
 
+def _cmd_up(args: argparse.Namespace) -> int:
+    """一键启动：变声服务（若已配置）→ 后端 → 原生窗口。
+
+    设计成「点击才启动」而不是开机自启 —— 变声服务带 torch，常驻要几百 MB，
+    不值得为它拖慢开机。
+    """
+
+    from nekopal.desktop import ensure_rvc_service, run_app
+
+    settings = load_settings()
+    if args.host:
+        settings.host = args.host
+    if args.port:
+        settings.port = args.port
+
+    ensure_rvc_service(verbose=not args.quiet)
+    return run_app(settings, hidden=args.hidden, width=args.width, height=args.height)
+
+
+def _cmd_down(args: argparse.Namespace) -> int:
+    """停掉原生窗口、后端与变声服务。"""
+
+    from nekopal.desktop import stop_all
+
+    stop_all()
+    return 0
+
+
 def _cmd_app(args: argparse.Namespace) -> int:
     from nekopal.desktop import run_app
 
@@ -464,6 +494,16 @@ def build_parser() -> argparse.ArgumentParser:
     app_cmd.add_argument("--width", type=int, default=1040)
     app_cmd.add_argument("--height", type=int, default=780)
 
+    up_cmd = sub.add_parser("up", help="一键启动（变声服务 + 后端 + 窗口）")
+    up_cmd.add_argument("--host", default=None)
+    up_cmd.add_argument("--port", type=int, default=None)
+    up_cmd.add_argument("--hidden", action="store_true", help="不开窗，只做启动自检")
+    up_cmd.add_argument("--width", type=int, default=1040)
+    up_cmd.add_argument("--height", type=int, default=780)
+    up_cmd.add_argument("--quiet", action="store_true")
+
+    sub.add_parser("down", help="停掉窗口、后端与变声服务")
+
     auto = sub.add_parser("autostart", help="开机自启（macOS LaunchAgent）")
     auto.add_argument(
         "action", nargs="?", default="status", choices=["status", "install", "uninstall"]
@@ -481,6 +521,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     handlers = {
         "serve": _cmd_serve,
         "app": _cmd_app,
+        "up": _cmd_up,
+        "down": _cmd_down,
         "open": _cmd_open,
         "read": _cmd_read,
         "voices": _cmd_voices,
