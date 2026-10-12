@@ -1,0 +1,115 @@
+"""TTS 后端注册表。"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any, Dict, List, Optional, Tuple
+
+from nekopal.core.models import SynthOptions, SynthResult, Voice
+from nekopal.tts.base import TTSBackend
+from nekopal.tts.edge import EdgeBackend
+from nekopal.tts.macos_say import SayBackend
+
+
+class TTSRegistry:
+    def __init__(self) -> None:
+        self._backends: Dict[str, TTSBackend] = {}
+        self._order: List[str] = []
+
+    # -- 注册 ------------------------------------------------------------
+    def register(self, backend: TTSBackend) -> None:
+        if backend.id in self._backends:
+            return
+        self._backends[backend.id] = backend
+        self._order.append(backend.id)
+
+    def get(self, backend_id: str) -> Optional[TTSBackend]:
+        return self._backends.get(backend_id)
+
+    def all(self) -> List[TTSBackend]:
+        return [self._backends[bid] for bid in self._order]
+
+    def default(self) -> Optional[TTSBackend]:
+        for backend in self.all():
+            if backend.available():
+                return backend
+        return self.all()[0] if self._order else None
+
+    # -- 解析 ------------------------------------------------------------
+    @staticmethod
+    def split(voice_id: str) -> Tuple[str, str]:
+        if ":" in voice_id:
+            head, tail = voice_id.split(":", 1)
+            return head, tail
+        return "", voice_id
+
+    def resolve(self, voice_id: str) -> Tuple[Optional[TTSBackend], str]:
+        backend_id, local = self.split(voice_id)
+        if backend_id:
+            return self._backends.get(backend_id), local
+        return self.default(), local
+
+    def resolve_voice_id(self, voice_id: str) -> str:
+        """把 ``say:auto`` 之类的占位符落成具体音色，保证缓存键稳定。"""
+
+        backend, local = self.resolve(voice_id)
+        if backend is None:
+            return voice_id
+        if local in ("", "auto") and hasattr(backend, "default_voice_id"):
+            return backend.default_voice_id()
+        return voice_id
+
+    # -- 查询 ------------------------------------------------------------
+    def describe(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for backend in self.all():
+            caps = backend.capabilities()
+            out.append(
+                {
+                    "id": backend.id,
+                    "name": backend.name,
+                    "available": backend.available(),
+                    "offline": caps.offline,
+                    "capabilities": caps.to_dict(),
+                }
+            )
+        return out
+
+    async def voices(self) -> List[Voice]:
+        results = await asyncio.gather(
+            *(backend.list_voices() for backend in self.all()),
+            return_exceptions=True,
+        )
+        out: List[Voice] = []
+        for result in results:
+            if isinstance(result, list):
+                out.extend(result)
+        return out
+
+    # -- 合成 ------------------------------------------------------------
+    async def synth(self, voice_id: str, text: str, options: SynthOptions) -> SynthResult:
+        backend, _ = self.resolve(voice_id)
+        if backend is None:
+            raise RuntimeError("未知的后端: {}".format(voice_id))
+        if not backend.available():
+            raise RuntimeError("后端当前不可用: {}".format(backend.id))
+        return await backend.synth(voice_id, text, options)
+
+    async def aclose(self) -> None:
+        for backend in self.all():
+            try:
+                await backend.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def build_registry() -> TTSRegistry:
+    """内置后端：``say``（离线兜底）+ ``edge``（音色丰富）。
+
+    两者都是 ``official`` 授权等级，符合设计文档 G10「默认即合法」。
+    """
+
+    registry = TTSRegistry()
+    registry.register(SayBackend())
+    registry.register(EdgeBackend())
+    return registry

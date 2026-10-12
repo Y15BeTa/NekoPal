@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NekoPal · 猫伴</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">NekoPal<span class="sub">猫伴</span></div>
+  <div class="controls">
+    <label class="field"><span>音色</span><select id="voice"></select></label>
+    <label class="field"><span>语速</span>
+      <select id="rate">
+        <option value="0.75">0.75x</option>
+        <option value="1" selected>1.0x</option>
+        <option value="1.25">1.25x</option>
+        <option value="1.5">1.5x</option>
+        <option value="2">2.0x</option>
+      </select>
+    </label>
+    <div class="transport">
+      <button id="prev" title="上一句">⏮</button>
+      <button id="playPause" class="primary" title="播放 / 暂停">▶</button>
+      <button id="next" title="下一句">⏭</button>
+    </div>
+  </div>
+</header>
+
+<section class="input-area">
+  <textarea id="input" placeholder="把一整块文字粘进来（一条长回答 / 一段讲义 / 一篇文章），然后点「朗读」。"></textarea>
+  <div class="input-actions">
+    <button id="readBtn" class="primary">朗读</button>
+    <button id="clearBtn">清空</button>
+    <span class="hint" id="status">就绪</span>
+  </div>
+</section>
+
+<main id="reader" class="reader">
+  <p class="empty">还没有内容。<br>粘贴文字后点「朗读」——<b>文字会先出现，声音随后跟上</b>。<br><span class="dim">朗读时可以点任意一句，从那里开始读。</span></p>
+</main>
+
+<audio id="audio" preload="auto"></audio>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+# ---- Python ----
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# ---- 工具缓存 ----
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- 本地数据（音频缓存、导出、日志）----
+.cache/
+export/
+
+# ---- 音色素材与模型权重（仓库零素材原则，见 voices/README.md）----
+voices/*/ref.wav
+voices/*/ref.mp3
+voices/*/ref.m4a
+voices/*/ckpt/
+*.wav
+*.mp3
+*.pth
+*.ckpt
+*.safetensors
+
+# ---- 角色素材：Live2D 模型（仓库零素材原则，见 characters/README.md）----
+characters/*/model/
+*.model3.json
+*.moc3
+*.motion3.json
+*.exp3.json
+*.physics3.json
+*.pose3.json
+*.cdi3.json
+
+# ---- 配置与密钥 ----
+.env
+*.local.yaml
+config.local.yaml
+
+# ---- 编辑器 / 系统 ----
+.DS_Store
+.idea/
+.vscode/
