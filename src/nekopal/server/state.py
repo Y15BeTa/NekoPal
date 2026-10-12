@@ -30,6 +30,17 @@ class Runtime:
     _subscribers: Set["asyncio.Queue[Dict[str, Any]]"] = field(default_factory=set)
     #: 去重表：fingerprint -> (task_id, 时间戳)
     _recent_reads: Dict[str, Any] = field(default_factory=dict)
+    #: 音色包 / 角色包扫描结果缓存（首次访问时加载）
+    packs_cache: Optional[Any] = field(default=None, repr=False)
+
+    def load_packs(self, reload: bool = False):
+        """扫描音色包与角色包（结果缓存，``reload=True`` 强制重扫）。"""
+
+        from nekopal.packs import load_packs as _load
+
+        if self.packs_cache is None or reload:
+            self.packs_cache = _load(known_backends=[backend.id for backend in self.tts.all()])
+        return self.packs_cache
 
     @classmethod
     def build(cls, settings: Optional[Settings] = None) -> "Runtime":

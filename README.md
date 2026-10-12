@@ -52,6 +52,8 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 | **活动记录 `/api/activity`** | 记录推送来源与插件事件，出事一条命令定位 | ✅ 可用 |
 | **进度书签** | 记住读到哪，下次接着读 | 🔜 Phase 2 |
 | **原生窗口外壳** | `nekopal app`：不开浏览器、**无需点击**即可自动朗读 | ✅ 可用 |
+| **导出音频** | `nekopal export`：wav / m4a **零额外依赖**（mp3 需 ffmpeg） | ✅ 可用 |
+| **音色包 / 角色包（只做接口）** | `nekopal packs`：扫描、校验、模板；**不内置任何素材** | ✅ 可用 |
 | **开机自启** | `nekopal autostart install`（macOS LaunchAgent） | ✅ 可用 |
 | **导出 mp3（通勤播客）** | 一键把整篇导出为音频文件 | 🔜 Phase 2 |
 | **文件模式** | 打开 `.md`，跟读窗自渲染整篇 | 🔜 Phase 2 |
@@ -83,10 +85,26 @@ uv run nekopal app                         # 🖥️ 打开原生窗口（推荐
 命令行也可以直接读：
 
 ```bash
-uv run nekopal voices                      # 列出可用音色
+uv run nekopal voices                      # 列出可用音色（含你自己导入的包）
 uv run nekopal read "把这段文字读给我听"    # 直接在本机播放
+uv run nekopal export --file 讲义.md       # 导出音频（通勤播客）
 uv run nekopal autostart install           # 开机自启（macOS LaunchAgent）
 ```
+
+**音色包 / 角色包（只做接口，不内置素材）**：
+
+```bash
+uv run nekopal packs dir                    # 我的包放哪（在仓库外，天然安全）
+uv run nekopal packs init voice my-voice    # 生成音色包模板
+uv run nekopal packs init character my-char # 生成角色包模板
+uv run nekopal packs list                   # 扫到了什么、哪些被跳过了
+```
+
+> 📌 **本项目只提供加载接口，不打包任何音色 / Live2D 素材。** 素材放
+> `~/.config/nekopal/voices/` 与 `~/.config/nekopal/characters/`（**在仓库外**），
+> 或仓库内的 `voices/`、`characters/`（素材已被 `.gitignore` 排除）。
+> 想用什么形象/音色由你决定，合规责任也在你自己 —— 详见
+> [`docs/竞品与合规调研.md`](docs/竞品与合规调研.md) 第 10 节「虚拟形象来源与条款」。
 
 **默认音色**：开箱只用**明确可用的来源**，无需任何额外素材——
 默认是 **Edge-TTS「晓晓」**（联网、带词级时间戳），并配了**离线兜底**：断网或后端不可用时**逐句自动回退**到系统 `say`，不会没声音。

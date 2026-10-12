@@ -6,6 +6,7 @@
     nekopal read "文字"    命令行直接朗读（本机播放）
     nekopal export         导出音频文件（通勤播客）
     nekopal voices         列出可用音色
+    nekopal packs          音色包 / 角色包管理（只做接口，不内置素材）
     nekopal autostart ...  开机自启（macOS LaunchAgent）
 """
 
@@ -177,6 +178,73 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_packs(args: argparse.Namespace) -> int:
+    """音色包 / 角色包管理 —— **只做接口，不内置任何素材**。"""
+
+    from nekopal.packs import ensure_user_dirs, load_packs, search_dirs, write_template
+
+    if args.action == "dir":
+        voices_dir, characters_dir = ensure_user_dirs()
+        print("把素材放到这里（它们在仓库外，天然不会被提交）：")
+        print()
+        print("  音色包  {}".format(voices_dir))
+        print("  角色包  {}".format(characters_dir))
+        print()
+        print("模板： nekopal packs init voice <id>")
+        if args.open:
+            subprocess.run(["open", str(voices_dir)], check=False)
+        return 0
+
+    if args.action == "init":
+        if not args.kind or not args.pack_id:
+            print("用法： nekopal packs init <voice|character> <id>", file=sys.stderr)
+            return 2
+        try:
+            path = write_template(args.kind, args.pack_id)
+        except ValueError as exc:
+            print("失败：{}".format(exc), file=sys.stderr)
+            return 1
+        print("已生成模板：{}".format(path))
+        print("编辑它，再把素材放进同一目录，然后： nekopal packs list")
+        return 0
+
+    voice_dirs, character_dirs = search_dirs()
+    print("扫描目录（从上到下优先级递减）：")
+    for directory in voice_dirs:
+        print("  音色包  {}".format(directory))
+    for directory in character_dirs:
+        print("  角色包  {}".format(directory))
+    print()
+
+    collection = load_packs()
+
+    if collection.voices:
+        print("音色包（{} 个）:".format(len(collection.voices)))
+        for pack in collection.voices:
+            flag = "  ⚠️ 未授权来源，仅供个人使用" if pack.license == "unofficial" else ""
+            print("  {:<34} {:<8} {}{}".format(pack.full_id, pack.backend, pack.name, flag))
+    else:
+        print("音色包：无（nekopal packs init voice my-voice 可以建一个）")
+
+    if collection.characters:
+        print("角色包（{} 个）:".format(len(collection.characters)))
+        for pack in collection.characters:
+            state = "形象就绪" if pack.model_exists else "仅声音（模型缺失，朗读不受影响）"
+            print("  {:<34} {:<30} {}".format(pack.id, state, pack.name))
+    else:
+        print("角色包：无")
+
+    if collection.problems:
+        print()
+        print("已跳过（{} 个）:".format(len(collection.problems)))
+        for problem in collection.problems:
+            print("  ❌ {}".format(problem.path))
+            print("     {}".format(problem.reason))
+        print()
+        print("跳过某个包不会影响其它包，也不会影响服务启动。")
+    return 0
+
+
 def _cmd_app(args: argparse.Namespace) -> int:
     from nekopal.desktop import run_app
 
@@ -234,6 +302,14 @@ def build_parser() -> argparse.ArgumentParser:
     export_cmd.add_argument("--name", default=None, help="文件名（不含扩展名）")
     export_cmd.add_argument("--gap", type=float, default=None, help="段间静音秒数（默认 0.15）")
 
+    packs_cmd = sub.add_parser("packs", help="音色包 / 角色包（只做接口，不内置素材）")
+    packs_cmd.add_argument(
+        "action", nargs="?", default="list", choices=["list", "dir", "init"]
+    )
+    packs_cmd.add_argument("kind", nargs="?", choices=["voice", "character"])
+    packs_cmd.add_argument("pack_id", nargs="?")
+    packs_cmd.add_argument("--open", action="store_true", help="在 Finder 里打开目录")
+
     app_cmd = sub.add_parser("app", help="打开原生窗口（桌面外壳）")
     app_cmd.add_argument("--host", default=None)
     app_cmd.add_argument("--port", type=int, default=None)
@@ -262,6 +338,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "read": _cmd_read,
         "voices": _cmd_voices,
         "export": _cmd_export,
+        "packs": _cmd_packs,
         "autostart": _cmd_autostart,
     }
     handler = handlers.get(args.command)

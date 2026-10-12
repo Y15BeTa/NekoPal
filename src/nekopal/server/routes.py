@@ -64,12 +64,22 @@ def build_router(runtime: Runtime) -> APIRouter:
     @router.get("/voices")
     async def voices() -> dict:
         items = await runtime.tts.voices()
+        collection = runtime.load_packs()
+        # 用户自己的包排在前面（覆盖同名内置音色的优先级更高）
+        merged = [pack.to_voice() for pack in collection.voices] + items
         return {
             "default": runtime.tts.resolve_voice_id(
                 runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
             ),
-            "voices": [voice.to_dict() for voice in items],
+            "voices": [voice.to_dict() for voice in merged],
+            "pack_problems": [problem.to_dict() for problem in collection.problems],
         }
+
+    @router.get("/packs")
+    async def packs(reload: bool = False) -> dict:
+        """音色包 / 角色包清单（**只做接口，不内置任何素材**）。"""
+
+        return runtime.load_packs(reload=reload).to_dict()
 
     @router.get("/capture/sources")
     async def capture_sources() -> dict:
@@ -385,9 +395,13 @@ def build_router(runtime: Runtime) -> APIRouter:
         return result
 
     @router.get("/characters")
-    async def characters() -> dict:
-        # Phase 3 才有内容；现在返回空数组，前端据此优雅降级
-        return {"characters": []}
+    async def characters(reload: bool = False) -> dict:
+        # Phase 3 才开始渲染形象；现在只负责**扫描用户自己放进来的包**
+        collection = runtime.load_packs(reload=reload)
+        return {
+            "characters": [pack.to_dict() for pack in collection.characters],
+            "problems": [problem.to_dict() for problem in collection.problems],
+        }
 
     @router.get("/avatar/capabilities")
     async def avatar_capabilities() -> dict:

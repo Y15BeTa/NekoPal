@@ -9,6 +9,23 @@
 > 🚫 **项目只做接口，不做分发**：不内置、不下载、不提供第三方模型的下载入口。
 > ✅ **默认音色全部来自明确可用的来源**（系统 `say` / Edge-TTS 官方音色 / VOICEVOX）。
 
+## 放哪里
+
+```
+~/.config/nekopal/voices/<音色 id>/voice.yaml     ← 推荐（在仓库外，天然不会被提交）
+<repo>/voices/<音色 id>/voice.yaml                ← 也可以（素材已被 .gitignore 排除）
+```
+
+## 用命令行管理
+
+```bash
+nekopal packs dir                     # 目录在哪（加 --open 会在 Finder 打开）
+nekopal packs init voice my-voice     # 生成带注释的模板
+nekopal packs list                    # 扫到了什么、哪些被跳过了、为什么
+```
+
+坏包**不会**让服务启动失败：会被跳过并在 `nekopal packs list` 里逐条列出原因。
+
 > 💡 音色只负责「声音」。如果你还想让声音**有个形象**（Live2D + 口型），请看 [`../characters/`](../characters/README.md)——
 > 角色包会**引用**这里的音色包，而不是重复定义一份音色。
 
