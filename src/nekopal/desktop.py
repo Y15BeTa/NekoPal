@@ -106,16 +106,23 @@ def ensure_rvc_service(verbose: bool = True) -> bool:
     return False
 
 
+#: `stop_all` 要停掉的进程（模式, 说明）。抽成模块常量是为了能写测试 —— 这里漏一项就会
+#: "点了关闭却关不干净"。
+#: ⚠️ 必须同时含 `up`：`nekopal up` 是在**同一进程内**调用 run_app 开窗的，
+#: 它的命令行里根本没有 "nekopal app" 这个子串（踩过）。
+STOP_PATTERNS = (
+    ("nekopal app", "原生窗口"),
+    ("nekopal up", "原生窗口（一键启动）"),
+    ("nekopal serve", "NekoPal 服务"),
+    ("integrations/rvc/serve.py", "变声服务"),
+)
+
+
 def stop_all(verbose: bool = True) -> int:
     """停掉 NekoPal 相关进程（窗口 / 后端 / 变声服务）。"""
 
-    patterns = (
-        ("nekopal app", "原生窗口"),
-        ("nekopal serve", "NekoPal 服务"),
-        ("integrations/rvc/serve.py", "变声服务"),
-    )
     stopped = 0
-    for pattern, label in patterns:
+    for pattern, label in STOP_PATTERNS:
         result = subprocess.run(["pkill", "-f", pattern], capture_output=True)
         if result.returncode == 0:
             stopped += 1

@@ -221,7 +221,7 @@ uv run python scripts/push.py --file 讲义.md --voice edge:zh-CN-XiaoxiaoNeural
 | [`characters/`](characters/README.md) | 角色包目录（Live2D 模型与音色的组合，**不含素材**） |
 | `src/nekopal/` | 后端源码：`core/`（领域逻辑）、`tts/`、`capture/`、`avatar/`、`server/` |
 | `web/` | 跟读窗前端，原生 HTML/CSS/JS，**无构建步骤** |
-| `tests/` | 离线单元测试（29 个，`pytest`） |
+| `tests/` | 离线单元测试（93 个，`pytest`；**全部离线**，不联网） |
 | `scripts/smoke.py` | 端到端冒烟测试：POST → SSE → 取音频 |
 | `scripts/push.py` | 把整块文字推给运行中的 NekoPal（管道 / 文件） |
 | `integrations/opencode-plugin/` | opencode V2 插件：回答完自动朗读 |
@@ -262,7 +262,7 @@ uv run python scripts/push.py --file 讲义.md --voice edge:zh-CN-XiaoxiaoNeural
 
 ## 许可证
 
-待定（建议 MIT）。在正式发布前确认。
+**MIT**（见 [`LICENSE`](LICENSE)）。注意：**音色 / 角色素材另有其权属**，不在本许可范围内（见「仓库零素材」）。
 
 ## 致谢
 

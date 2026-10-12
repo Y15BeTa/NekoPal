@@ -168,9 +168,15 @@ def build_router(runtime: Runtime) -> APIRouter:
         except InvalidRequest as exc:
             raise _invalid(str(exc)) from exc
 
-        req.voice = runtime.tts.resolve_voice_id(
-            req.voice, fallback=runtime.settings.fallback_voice
+        # 兜底只对「默认音色」生效：用户**明确选过**的音色不该被悄悄换掉。
+        # 踩过：按设计文档把变声命令写在音色包里时，rvc 曾被误判为不可用，
+        # 这里静默换成 `say:auto` → 听到的是系统音色，却没有任何提示。
+        fallback = (
+            runtime.settings.fallback_voice
+            if req.voice == runtime.settings.default_voice
+            else None
         )
+        req.voice = runtime.tts.resolve_voice_id(req.voice, fallback=fallback)
         options = SynthOptions.from_dict(req.options)
         sentences = prepare_sentences(req.text, req.options, runtime.settings.clean)
         if not sentences:

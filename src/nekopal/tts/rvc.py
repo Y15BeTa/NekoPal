@@ -45,21 +45,31 @@ class RvcBackend:
         self._converter = converter
         self._registry = None
         self._lookup: Optional[Callable[[str], object]] = None
+        self._pack_source: Optional[Callable[[], object]] = None
 
     # -- 装配 ------------------------------------------------------------
-    def attach(self, registry, lookup: Callable[[str], object]) -> None:
-        """由 Registry / Runtime 在装配时调用：拿到注册表与音色包查询函数。"""
+    def attach(self, registry, lookup: Callable[[str], object], pack_source=None) -> None:
+        """由 Runtime 在装配时调用：拿到注册表、音色包查询函数、以及音色包总表。
+
+        ``pack_source`` 用来回答"这个后端到底能不能用" —— 变声命令既可以来自全局
+        环境变量，也可以写在**音色包内部**（设计文档 6.9）。只看全局变量的话，
+        把命令写在包里的用户会被误判成"后端不可用"（踩过：会被静默换成系统音色）。
+        """
 
         self._registry = registry
         self._lookup = lookup
+        self._pack_source = pack_source
 
     # -- 能力 ------------------------------------------------------------
     def capabilities(self) -> Capabilities:
         return Capabilities(
-            # 变声本身**不产生**时间戳；能拿到词级只是因为 base 音色有（见 synth 里透传
-            # `base_result.words`）。所以这里保守报 False。
-            # 前端是**看数据**决定的（`segment.words` 非空才逐词高亮），不依赖这个标志。
-            word_timings=False,
+            # 变声本身**不产生**时间戳，但会**透传** base 音色的（见 synth 里的
+            # `words=list(base_result.words)`），所以这里报 True —— 否则
+            # /api/voices 与 /api/backends 会把这个音色标成"没有词级能力"，
+            # 按能力协商的客户端会白白关掉逐词高亮（又是一处"能力位撒谎"）。
+            # ⚠️ 若 base 是 `say` 这类没有时间戳的后端，返回的 `words` 会是空数组 ——
+            #    客户端必须容忍空 words（这是任何 TTS 的通用要求）。
+            word_timings=True,
             rate=True,            # 由 base_voice 负责
             pitch=True,           # 映射到命令模板的 {pitch}
             volume=False,
@@ -68,14 +78,33 @@ class RvcBackend:
         )
 
     def available(self) -> bool:
-        return self.converter() is not None
+        return self.converter() is not None or self._any_pack_command()
+
+    def _any_pack_command(self) -> bool:
+        """有没有哪个音色包自带变声命令（``rvc.command``）。"""
+
+        if self._pack_source is None:
+            return False
+        try:
+            collection = self._pack_source()
+        except Exception:  # noqa: BLE001 - 可用性判断不该因扫描出错而崩
+            return False
+        for pack in getattr(collection, "voices", None) or []:
+            if getattr(pack, "command", None):
+                return True
+        return False
 
     def converter(self) -> Optional[VoiceConverter]:
         if self._converter is not None and self._converter.available():
             return self._converter
         template = getattr(self._settings, "rvc_command", None)
         if template:
-            self._converter = CommandConverter(template)
+            # 必须把 rvc_timeout 带上 —— 否则服务端路径恒用默认 600 秒，
+            # 用户设的 NEKOPAL_RVC_TIMEOUT 只在 CLI 里生效，看起来"设了没用"。
+            self._converter = CommandConverter(
+                template,
+                timeout=float(getattr(self._settings, "rvc_timeout", 600.0)),
+            )
             return self._converter
         return None
 

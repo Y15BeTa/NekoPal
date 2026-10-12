@@ -54,6 +54,9 @@ export class Reader {
     this.startIndex = 0;
     this.started = false;
     this.pendingIndex = null;
+    // 合成失败的句子（收到 error 事件）—— 播放时要跳过，
+    // 否则会永远停在"合成中"，因为那一句的 segment 永远不会到。
+    this.missing = new Set();
     this.rate = 1.0;
     this.playing = false;
     this.done = false;
@@ -79,6 +82,7 @@ export class Reader {
     this.activeWord = -1;
     this.started = false;
     this.pendingIndex = null;
+    this.missing.clear();
     this.playing = false;
     this.done = false;
     this.container.innerHTML = '';
@@ -91,6 +95,7 @@ export class Reader {
     this.startIndex = Math.max(0, Math.min(startIndex, Math.max(0, sentences.length - 1)));
     this.done = false;
     this.started = false;
+    this.missing.clear();
 
     const frag = document.createDocumentFragment();
     sentences.forEach((text, index) => {
@@ -143,6 +148,12 @@ export class Reader {
 
     const segment = this.segments.get(index);
     if (!segment) {
+      if (this.missing.has(index)) {
+        // 这一句合成失败（后端已经发过 error）—— 跳过，
+        // 不要原地等一个**永远不会到来**的 segment（踩过：播放会永久卡在"合成中"）。
+        this._advanceFrom(index);
+        return;
+      }
       this.pendingIndex = index;
       this.onStatus('合成中…（第 ' + (index + 1) + ' 句）');
       return;
@@ -206,14 +217,35 @@ export class Reader {
     // 没有任何活动段时的 ended 不是"读完了"（例如解锁自动播放用的静音音频）
     if (this.current < 0) return;
     this.sentenceEls[this.current]?.classList.add('done');
-    const next = this.current + 1;
+    this._advanceFrom(this.current);
+  }
+
+  /** 标记某句合成失败 —— 播放到这里时跳过，而不是永远等它的 segment。 */
+  markMissing(index) {
+    this.missing.add(index);
+    if (this.pendingIndex === index) {
+      this.pendingIndex = null;
+      this._advanceFrom(index);
+    }
+  }
+
+  /** 从 index 往后找**下一个还能播的**句子继续（自动跳过失败的）。 */
+  _advanceFrom(index) {
+    let next = index + 1;
+    while (next < this.sentences.length && this.missing.has(next)) next += 1;
+
     if (next < this.sentences.length) {
       this.playFrom(next);
-    } else {
-      this.playing = false;
-      this._updateButton();
-      this.onStatus('已读完');
+      return;
     }
+
+    this.playing = false;
+    this._updateButton();
+    this.onStatus(
+      this.missing.size
+        ? '已读完（有 ' + this.missing.size + ' 句合成失败，已跳过）'
+        : '已读完'
+    );
   }
 
   _onTime() {

@@ -102,11 +102,13 @@ class EdgeBackend:
                     )
                 )
 
-        if not voices:
-            voices = [self._make_voice(*entry) for entry in FALLBACK_VOICES]
+        if voices:
+            self._voices = voices  # 只缓存**联网枚举成功**的结果
+            return list(voices)
 
-        self._voices = voices
-        return list(voices)
+        # 离线（或接口变更）：给一份兜底列表，但**不写进缓存** ——
+        # 否则服务启动那一刻正好断网，就会永远只看到这十几个音色，直到重启服务。
+        return [self._make_voice(*entry) for entry in FALLBACK_VOICES]
 
     # -- 合成 ------------------------------------------------------------
     @staticmethod

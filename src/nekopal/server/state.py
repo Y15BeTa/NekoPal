@@ -53,7 +53,8 @@ class Runtime:
         # 变声后端需要「注册表」来跑基础音色，也需要「音色包查询」来拿模型路径
         rvc = runtime.tts.get("rvc")
         if rvc is not None and hasattr(rvc, "attach"):
-            rvc.attach(runtime.tts, runtime.find_voice_pack)
+            # pack_source 让 rvc 知道"命令也可能写在音色包里"，否则会误判后端不可用
+            rvc.attach(runtime.tts, runtime.find_voice_pack, runtime.load_packs)
         return runtime
 
     def find_voice_pack(self, voice_id: str):

@@ -317,7 +317,17 @@ function subscribe(taskId, startIndex) {
     if (event.data) {
       try {
         const detail = JSON.parse(event.data);
-        setStatus('错误：' + (detail.message || detail.code));
+        const index = detail.segment_index;
+        if (Number.isInteger(index)) {
+          // 关键：告诉播放器"这一句没有声音"，让它跳过 ——
+          // 否则播放会永久停在"合成中"，因为那一句的 segment 永远不会到。
+          reader.markMissing(index);
+          setStatus(
+            '第 ' + (index + 1) + ' 句合成失败，已跳过：' + (detail.message || detail.code)
+          );
+        } else {
+          setStatus('错误：' + (detail.message || detail.code));
+        }
         return;
       } catch (err) { /* 不是命名错误事件，按连接问题处理 */ }
     }

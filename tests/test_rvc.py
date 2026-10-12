@@ -96,13 +96,42 @@ def test_id_and_capabilities():
     backend, _ = build_backend()
     assert backend.id == "rvc"
     caps = backend.capabilities()
-    assert caps.word_timings is False   # 变声不产出词级时间戳
+    assert caps.word_timings is True   # 变声不**产生**时间戳，但会**透传** base 的
     assert caps.offline is True
 
 
 def test_available_requires_a_command():
     assert build_backend()[0].available() is True
     assert RvcBackend(settings_with(command=[])).available() is False
+
+
+def test_available_when_only_the_pack_has_a_command():
+    """把变声命令写在**音色包内**（设计文档 6.9）时，后端也必须算"可用"。
+
+    踩过：`available()` 只看全局 `NEKOPAL_RVC_COMMAND`，于是"命令写在包里"的用户
+    被判成"后端不可用" → `/api/read` 会静默把音色换成系统音色，且零提示。
+    """
+
+    class PackWithCommand(FakePack):
+        command = ["echo", "{input}", "{output}"]
+
+    backend = RvcBackend(settings_with(command=[]))  # 没有全局命令
+    backend.attach(
+        FakeRegistry(),
+        lambda voice_id: FakePack(),
+        lambda: SimpleNamespace(voices=[PackWithCommand()]),
+    )
+    assert backend.available() is True
+
+
+def test_unavailable_when_no_command_anywhere():
+    backend = RvcBackend(settings_with(command=[]))
+    backend.attach(
+        FakeRegistry(),
+        lambda voice_id: FakePack(),
+        lambda: SimpleNamespace(voices=[]),  # 全局和包里都没有命令
+    )
+    assert backend.available() is False
 
 
 def test_list_voices_is_empty_by_design():
@@ -129,7 +158,7 @@ def test_stamp_capabilities_takes_them_from_the_backend(tmp_path):
     registry.stamp_capabilities([from_pack])
     assert from_pack.capabilities.rate is True
     assert from_pack.capabilities.pitch is True
-    assert from_pack.capabilities.word_timings is False
+    assert from_pack.capabilities.word_timings is True
 
 
 def test_stamp_capabilities_ignores_unknown_backend():
