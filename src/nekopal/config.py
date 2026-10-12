@@ -7,6 +7,7 @@ MVP 阶段只支持「代码默认值 + 环境变量」两层；
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -83,6 +84,11 @@ class Settings:
     export_gap: float = 0.15
     export_format: str = "m4a"
 
+    #: 变声命令模板（RVC / DDSP-SVC 等"音频 → 音频"工具）。
+    #: 占位符：{input} {output} {model} {index} {pitch}
+    rvc_command: List[str] = field(default_factory=list)
+    rvc_timeout: float = 600.0
+
     web_dir: Optional[Path] = field(default_factory=default_web_dir)
 
     def to_dict(self) -> dict:
@@ -102,6 +108,8 @@ class Settings:
             "export_dir": str(self.export_dir),
             "export_gap": self.export_gap,
             "export_format": self.export_format,
+            "rvc_command": " ".join(self.rvc_command),
+            "rvc_timeout": self.rvc_timeout,
         }
 
 
@@ -120,6 +128,11 @@ def load_settings() -> Settings:
     s.export_dir = Path(_env("NEKOPAL_EXPORT_DIR", str(s.export_dir)))
     s.export_gap = _env_float("NEKOPAL_EXPORT_GAP", s.export_gap)
     s.export_format = _env("NEKOPAL_EXPORT_FORMAT", s.export_format)
+
+    raw_rvc = os.environ.get("NEKOPAL_RVC_COMMAND", "").strip()
+    if raw_rvc:
+        s.rvc_command = shlex.split(raw_rvc)
+    s.rvc_timeout = _env_float("NEKOPAL_RVC_TIMEOUT", s.rvc_timeout)
 
     web = os.environ.get("NEKOPAL_WEB_DIR")
     if web:

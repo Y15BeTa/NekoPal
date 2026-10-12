@@ -26,6 +26,45 @@ nekopal packs list                    # 扫到了什么、哪些被跳过了、�
 
 坏包**不会**让服务启动失败：会被跳过并在 `nekopal packs list` 里逐条列出原因。
 
+## 变声音色（RVC / DDSP-SVC 这类"音频 → 音频"模型）
+
+社区动漫角色的音色模型**大多是 RVC**（声音转换），不是 GPT-SoVITS（文本合成）——
+它们**不能直接喂文本**。所以本项目把它们做成一条组合管线：
+
+```
+文本 ──(base_voice 合成)──► 音频 ──(你配置的变声命令)──► 目标音色
+```
+
+**① 先配好变声命令**（占位符 `{input}` `{output}` `{model}` `{index}` `{pitch}`）：
+
+```bash
+export NEKOPAL_RVC_COMMAND='python infer.py {input} {output} --model {model} --index {index}'
+nekopal convert show      # 看当前配置
+nekopal convert test      # 自检：合成 → 变声 → 报告（附排查清单）
+```
+
+**② 再写音色包**：
+
+```yaml
+id: rana
+name: "要楽奈（变声）"
+backend: rvc                    # ← 关键
+lang: ["zh"]
+tags: ["community"]
+license: unofficial             # 社区模型如实标 unofficial（界面会打黄标）
+commercial_ok: false
+redistributable: false
+rvc:
+  base_voice: edge:zh-CN-XiaoxiaoNeural   # 先用谁合成（必填）
+  model: rana.pth                          # 你下载的变声模型（必填，放本目录）
+  index: rana.index                        # 可选
+  # command: [...]                         # 可选，覆盖全局命令
+```
+
+**③ 验证**：`nekopal packs list` 看到它 → `nekopal convert test --pack rana` → 通了就能在跟读窗里选。
+
+> ⚠️ 变声不产出**词级时间戳**，所以高亮会自动降级为**句级**（这是正常的，不是坏了）。
+
 > 💡 音色只负责「声音」。如果你还想让声音**有个形象**（Live2D + 口型），请看 [`../characters/`](../characters/README.md)——
 > 角色包会**引用**这里的音色包，而不是重复定义一份音色。
 

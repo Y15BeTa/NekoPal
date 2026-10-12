@@ -7,6 +7,7 @@
     nekopal export         导出音频文件（通勤播客）
     nekopal voices         列出可用音色
     nekopal packs          音色包 / 角色包管理（只做接口，不内置素材）
+    nekopal convert        变声链路自检（RVC / DDSP-SVC）
     nekopal autostart ...  开机自启（macOS LaunchAgent）
 """
 
@@ -245,6 +246,132 @@ def _cmd_packs(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_convert(args: argparse.Namespace) -> int:
+    """变声链路自检：合成一句 → 跑你的变声命令 → 报告结果。
+
+    变声工具五花八门，本项目**不猜任何 API**，只约定「给一个 WAV，还一个 WAV」。
+    这个命令就是让你确认那条命令到底能不能跑通。
+    """
+
+    from nekopal.core.convert import CommandConverter, ConvertError, ConvertRequest
+    from nekopal.core.export import decode, is_target_wav, write_wav
+    from nekopal.core.models import SynthOptions
+    from nekopal.packs import load_packs
+    from nekopal.tts.registry import build_registry
+
+    settings = load_settings()
+    registry = build_registry(settings)
+    rvc = registry.get("rvc")
+    if rvc is None:
+        print("没有 rvc 后端（这不正常）", file=sys.stderr)
+        return 1
+
+    collection = load_packs(known_backends=[backend.id for backend in registry.all()])
+    pack = None
+    if args.pack:
+        pack = next((item for item in collection.voices if item.id == args.pack), None)
+        if pack is None:
+            print("找不到音色包 `{}`。先跑 `nekopal packs list` 看看有哪些。".format(args.pack), file=sys.stderr)
+            return 1
+
+    # 变声命令：命令行 > 音色包 > 环境变量
+    if args.convert_command:
+        converter = CommandConverter(args.convert_command, timeout=settings.rvc_timeout)
+    elif pack is not None and pack.command:
+        converter = CommandConverter(pack.command, timeout=settings.rvc_timeout)
+    else:
+        converter = rvc.converter()
+
+    if args.action == "show":
+        print("变声命令 : {}".format(converter.describe() if converter else "（未配置）"))
+        print("超时     : {:.0f} 秒".format(settings.rvc_timeout))
+        print()
+        print("配置方式（占位符 {input} {output} {model} {index} {pitch}）：")
+        print("  export NEKOPAL_RVC_COMMAND='python infer.py {input} {output} --model {model}'")
+        return 0
+
+    if converter is None or not converter.available():
+        print("还没配置变声命令 —— 这是唯一需要你手动做的事。", file=sys.stderr)
+        print()
+        print("命令模板里的占位符：")
+        print("  {input}   合成出来的原始音频（WAV）")
+        print("  {output}  变声结果要写到哪里（WAV）")
+        print("  {model}   RVC / DDSP-SVC 的模型路径")
+        print("  {index}   index 文件路径（可为空）")
+        print("  {pitch}   变调半音数")
+        print()
+        print("例：")
+        print("  export NEKOPAL_RVC_COMMAND='python infer.py {input} {output} --model {model} --index {index} --pitch {pitch}'")
+        return 1
+
+    model = args.model or (pack.rvc_model if pack else None)
+    index = args.index or (pack.rvc_index if pack else None)
+    base_voice = args.base_voice or (pack.base_voice if pack else None) or "say:auto"
+
+    print("变声命令 : {}".format(converter.describe()))
+    print("输入音色 : {}".format(base_voice))
+    print("模型     : {}".format(model or "（未指定 —— 如果命令里用不到 {model} 就没关系）"))
+    print()
+
+    out_dir = Path(args.out).expanduser() if args.out else settings.cache_dir / "convert-test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    async def run() -> int:
+        try:
+            base = await registry.synth(base_voice, args.text, SynthOptions())
+            print("① 合成完成 : {:5.2f}s · {} · {} 字节".format(
+                base.duration, base.extension, len(base.audio)))
+
+            stage = out_dir / "step1-base"
+            stage.mkdir(parents=True, exist_ok=True)
+            raw = stage / ("base." + base.extension)
+            raw.write_bytes(base.audio)
+            if is_target_wav(raw):
+                source = raw
+            else:
+                source = stage / "base.wav"
+                write_wav(decode(raw, stage), source)
+            print("② 已转成变声输入 : {}".format(source))
+
+            target = out_dir / "step2-converted.wav"
+            await converter.convert(
+                ConvertRequest(
+                    input_path=source,
+                    output_path=target,
+                    model=model,
+                    index=index,
+                    pitch=0.0,
+                )
+            )
+            from nekopal.media import wav_duration
+
+            print("③ 变声完成 : {:5.2f}s → {}".format(wav_duration(target.read_bytes()), target))
+
+            if args.play and sys.platform == "darwin":
+                print("   播放中…")
+                subprocess.run(["afplay", str(target)], check=False)
+
+            print()
+            print("✅ 链路通了。接下来只要把这个音色包配好，就能在跟读窗里选它。")
+            return 0
+        except ConvertError as exc:
+            print()
+            print("❌ 变声失败：{}".format(exc), file=sys.stderr)
+            print()
+            print("排查顺序：")
+            print("  1. 命令第一段是可执行程序吗？（先在终端里手跑一遍同样的命令）")
+            print("  2. {model} 指向的文件存在吗？")
+            print("  3. 那个工具自己能跑吗？（缺依赖 / 缺模型 / 需要 GPU）")
+            return 1
+        except Exception as exc:  # noqa: BLE001
+            print("❌ 失败：{}".format(exc), file=sys.stderr)
+            return 1
+        finally:
+            await registry.aclose()
+
+    return asyncio.run(run())
+
+
 def _cmd_app(args: argparse.Namespace) -> int:
     from nekopal.desktop import run_app
 
@@ -302,6 +429,26 @@ def build_parser() -> argparse.ArgumentParser:
     export_cmd.add_argument("--name", default=None, help="文件名（不含扩展名）")
     export_cmd.add_argument("--gap", type=float, default=None, help="段间静音秒数（默认 0.15）")
 
+    convert_cmd = sub.add_parser("convert", help="变声链路自检（RVC / DDSP-SVC）")
+    convert_cmd.add_argument(
+        "action", nargs="?", default="test", choices=["test", "show"]
+    )
+    convert_cmd.add_argument("--pack", default=None, help="用哪个音色包的定义")
+    convert_cmd.add_argument("--base-voice", default=None, help="基础音色（先用谁合成）")
+    convert_cmd.add_argument("--model", default=None, help="变声模型路径")
+    convert_cmd.add_argument("--index", default=None, help="index 文件路径")
+    # 注意：不能用 --command —— 它的 dest 会覆盖 add_subparsers(dest="command")
+    convert_cmd.add_argument(
+        "--convert-command", dest="convert_command", nargs="*", default=None,
+        help="覆盖变声命令模板",
+    )
+    convert_cmd.add_argument(
+        "--text", default="这是变声链路自检，如果听到这句话，说明配置正确。"
+    )
+    convert_cmd.add_argument("--out", default=None, help="中间产物放哪")
+    convert_cmd.add_argument("--play", action="store_true", default=True)
+    convert_cmd.add_argument("--no-play", dest="play", action="store_false")
+
     packs_cmd = sub.add_parser("packs", help="音色包 / 角色包（只做接口，不内置素材）")
     packs_cmd.add_argument(
         "action", nargs="?", default="list", choices=["list", "dir", "init"]
@@ -339,6 +486,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "voices": _cmd_voices,
         "export": _cmd_export,
         "packs": _cmd_packs,
+        "convert": _cmd_convert,
         "autostart": _cmd_autostart,
     }
     handler = handlers.get(args.command)

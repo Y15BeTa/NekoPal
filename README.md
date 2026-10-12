@@ -54,6 +54,7 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 | **原生窗口外壳** | `nekopal app`：不开浏览器、**无需点击**即可自动朗读 | ✅ 可用 |
 | **导出音频** | `nekopal export`：wav / m4a **零额外依赖**（mp3 需 ffmpeg） | ✅ 可用 |
 | **音色包 / 角色包（只做接口）** | `nekopal packs`：扫描、校验、模板；**不内置任何素材** | ✅ 可用 |
+| **变声后端（RVC / DDSP-SVC）** | `nekopal convert`：`base_voice 合成 → 变声命令`，能接任何音频→音频工具 | ✅ 可用 |
 | **开机自启** | `nekopal autostart install`（macOS LaunchAgent） | ✅ 可用 |
 | **导出 mp3（通勤播客）** | 一键把整篇导出为音频文件 | 🔜 Phase 2 |
 | **文件模式** | 打开 `.md`，跟读窗自渲染整篇 | 🔜 Phase 2 |
@@ -88,6 +89,8 @@ uv run nekopal app                         # 🖥️ 打开原生窗口（推荐
 uv run nekopal voices                      # 列出可用音色（含你自己导入的包）
 uv run nekopal read "把这段文字读给我听"    # 直接在本机播放
 uv run nekopal export --file 讲义.md       # 导出音频（通勤播客）
+uv run nekopal packs list                  # 音色包 / 角色包（只做接口，不内置素材）
+uv run nekopal convert test                # 变声链路自检（RVC / DDSP-SVC）
 uv run nekopal autostart install           # 开机自启（macOS LaunchAgent）
 ```
 

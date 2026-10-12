@@ -119,6 +119,70 @@ def test_sovits_requires_existing_ref_audio(tmp_path):
     assert collection.voices[0].backend == "sovits"
 
 
+def test_rvc_pack_requires_base_voice_and_model(tmp_path):
+    """变声音色必须说明「先用谁合成」和「用哪个模型」。"""
+
+    write_pack(
+        tmp_path, "rana", "voice",
+        voice_data(id="rana", backend="rvc", rvc={"base_voice": "edge:zh-CN-XiaoxiaoNeural"}),
+    )
+    collection = load(voices_dir=tmp_path, backends=("say", "edge", "rvc"))
+    assert collection.voices == []
+    assert "model" in collection.problems[0].reason
+
+
+def test_rvc_pack_loads_when_complete(tmp_path):
+    folder = write_pack(
+        tmp_path, "rana", "voice",
+        voice_data(
+            id="rana",
+            backend="rvc",
+            rvc={
+                "base_voice": "edge:zh-CN-XiaoxiaoNeural",
+                "model": "rana.pth",
+                "index": "rana.index",
+            },
+        ),
+    )
+    collection = load(voices_dir=tmp_path, backends=("say", "edge", "rvc"))
+    assert collection.voices == []
+    assert "变声模型不存在" in collection.problems[0].reason
+
+    (folder / "rana.pth").write_bytes(b"fake-model")
+    collection = load(voices_dir=tmp_path, backends=("say", "edge", "rvc"))
+    assert collection.voices == []
+    assert "index 文件不存在" in collection.problems[0].reason
+
+    (folder / "rana.index").write_bytes(b"fake-index")
+    collection = load(voices_dir=tmp_path, backends=("say", "edge", "rvc"))
+    assert len(collection.voices) == 1
+    pack = collection.voices[0]
+    assert pack.full_id == "rvc:rana"
+    assert pack.base_voice == "edge:zh-CN-XiaoxiaoNeural"
+    assert pack.rvc_model.endswith("rana.pth")
+    assert pack.rvc_index.endswith("rana.index")
+
+
+def test_rvc_pack_verdict_is_unofficial_friendly(tmp_path):
+    """社区模型如实标 unofficial —— 界面会据此打黄标，而不是假装合法。"""
+
+    folder = write_pack(
+        tmp_path, "rana", "voice",
+        voice_data(
+            id="rana",
+            backend="rvc",
+            license="unofficial",
+            commercial_ok=False,
+            rvc={"base_voice": "say:auto", "model": "rana.pth"},
+        ),
+    )
+    (folder / "rana.pth").write_bytes(b"fake")
+    pack = load(voices_dir=tmp_path, backends=("say", "edge", "rvc")).voices[0]
+    assert pack.license == "unofficial"
+    assert pack.commercial_ok is False
+    assert pack.to_voice().license == "unofficial"
+
+
 def test_ignored_folders_and_empty_dirs(tmp_path):
     (tmp_path / ".hidden").mkdir()
     (tmp_path / "no-yaml").mkdir()

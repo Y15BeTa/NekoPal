@@ -159,7 +159,10 @@ class EdgeBackend:
         if not audio:
             raise RuntimeError("edge-tts 没有返回音频（网络问题？）")
 
-        duration = words[-1].t1 if words else len(audio) / MP3_BYTES_PER_SECOND
+        # 时长取「最后一个词的结束」与「按字节估算」的较大值 ——
+        # 只取前者会漏掉尾部的静音（实测差 0.5 秒以上）。
+        by_bytes = len(audio) / MP3_BYTES_PER_SECOND
+        duration = max(words[-1].t1 if words else 0.0, by_bytes)
         return SynthResult(
             audio=audio,
             sample_rate=24000,

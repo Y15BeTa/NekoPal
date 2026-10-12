@@ -45,11 +45,24 @@ class Runtime:
     @classmethod
     def build(cls, settings: Optional[Settings] = None) -> "Runtime":
         settings = settings or load_settings()
-        return cls(
+        runtime = cls(
             settings=settings,
-            tts=build_registry(),
+            tts=build_registry(settings),
             cache=AudioCache(settings.cache_dir, max_mb=settings.cache_max_mb),
         )
+        # 变声后端需要「注册表」来跑基础音色，也需要「音色包查询」来拿模型路径
+        rvc = runtime.tts.get("rvc")
+        if rvc is not None and hasattr(rvc, "attach"):
+            rvc.attach(runtime.tts, runtime.find_voice_pack)
+        return runtime
+
+    def find_voice_pack(self, voice_id: str):
+        """按 ``backend:local`` 或裸 id 找音色包定义。"""
+
+        for pack in self.load_packs().voices:
+            if pack.full_id == voice_id or pack.id == voice_id:
+                return pack
+        return None
 
     def record(self, event: str, **fields: Any) -> Dict[str, Any]:
         entry: Dict[str, Any] = {"at": time.time(), "event": event}

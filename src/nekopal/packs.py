@@ -71,6 +71,11 @@ class VoicePack:
     prompt_lang: Optional[str] = None
     weights: Optional[str] = None
     backend_voice: Optional[str] = None
+    #: 仅 backend == "rvc"（变声）时使用
+    base_voice: Optional[str] = None
+    rvc_model: Optional[str] = None
+    rvc_index: Optional[str] = None
+    command: Optional[List[str]] = None
 
     @property
     def full_id(self) -> str:
@@ -310,12 +315,32 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
         )
 
     section = data.get(backend) or {}
+    base_voice = None
+    resolved_model = None
+    resolved_index = None
+
     if backend == "sovits":
         ref = _resolve(folder, section.get("ref_audio"))
         if ref is None:
             reasons.append("sovits 音色需要在 `{}` 段里给出 `ref_audio`".format(backend))
         elif not ref.is_file():
             reasons.append("参考音频不存在：{}".format(ref))
+
+    if backend == "rvc":
+        section = data.get("rvc") or {}
+        base_voice = section.get("base_voice")
+        if not base_voice:
+            reasons.append("rvc 音色需要在 `rvc` 段里给出 `base_voice`（先用哪个音色合成）")
+        if not section.get("model"):
+            reasons.append("rvc 音色需要在 `rvc` 段里给出 `model`（你下载的变声模型）")
+        model_path = _resolve(folder, section.get("model"))
+        index_path = _resolve(folder, section.get("index"))
+        if model_path is not None and not model_path.is_file():
+            reasons.append("变声模型不存在：{}".format(model_path))
+        if index_path is not None and not index_path.is_file():
+            reasons.append("index 文件不存在：{}".format(index_path))
+        resolved_model = str(model_path) if model_path else None
+        resolved_index = str(index_path) if index_path else None
 
     if reasons:
         raise ValueError("；".join(reasons))
@@ -336,6 +361,10 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
         prompt_lang=section.get("prompt_lang"),
         weights=str(section.get("weights") or "") or None,
         backend_voice=section.get("voice"),
+        base_voice=base_voice,
+        rvc_model=resolved_model,
+        rvc_index=resolved_index,
+        command=[str(part) for part in section.get("command")] if section.get("command") else None,
     )
 
 
@@ -376,7 +405,7 @@ def _load_character(spec: Path, folder: Path) -> CharacterPack:
 
 VOICE_TEMPLATE = """\
 # 音色包定义 —— 素材由你自己准备，本项目不提供任何素材
-id: {pack_id}
+id: __PACK_ID__
 name: "我的音色"
 backend: sovits                 # say | edge | sovits
 lang: ["zh"]
@@ -394,11 +423,19 @@ sovits:
 
 # edge:
 #   voice: zh-CN-XiaoxiaoNeural
+
+# 变声（RVC / DDSP-SVC 这类"音频→音频"的模型）—— 需要先配好变声命令：
+# backend: rvc
+# rvc:
+#   base_voice: edge:zh-CN-XiaoxiaoNeural   # 先用谁合成（必填）
+#   model: rana.pth                          # 你下载的变声模型（必填，放本目录）
+#   index: rana.index                        # 可选
+#   command: ["python", "infer.py", "{input}", "{output}", "--model", "{model}"]
 """
 
 CHARACTER_TEMPLATE = """\
 # 角色包定义 —— 素材由你自己准备，本项目不提供任何素材
-id: {pack_id}
+id: __PACK_ID__
 name: "我的角色"
 voice: my-voice                # 引用音色包的 id
 license: self-recorded         # official | self-recorded | licensed | public-domain | unofficial
@@ -412,7 +449,7 @@ avatar:
   lipsync:
     mode: volume                # volume（音频振幅，通用）| timings（词级时间戳，更准）
     param: ParamMouthOpenY
-  expressions: {{}}
+  expressions: {}
 # 可以是空目录（先只要声音），之后再把模型放进来
 """
 
@@ -423,10 +460,11 @@ def write_template(kind: str, pack_id: str) -> Path:
     voices_dir, characters_dir = ensure_user_dirs()
     if kind == "voice":
         target = voices_dir / pack_id / "voice.yaml"
-        content = VOICE_TEMPLATE.format(pack_id=pack_id)
+        # 用简单替换而不是 str.format：模板里本来就有 {input} 这类占位符
+        content = VOICE_TEMPLATE.replace("__PACK_ID__", pack_id)
     elif kind == "character":
         target = characters_dir / pack_id / "character.yaml"
-        content = CHARACTER_TEMPLATE.format(pack_id=pack_id)
+        content = CHARACTER_TEMPLATE.replace("__PACK_ID__", pack_id)
     else:
         raise ValueError("kind 只能是 voice 或 character")
 
