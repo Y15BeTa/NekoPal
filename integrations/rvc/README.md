@@ -41,7 +41,7 @@ uv pip install --python ~/.local/share/nekopal/rvc-venv/bin/python \
 
 ```bash
 export NEKOPAL_RVC_COMMAND='~/.local/share/nekopal/rvc-venv/bin/python \
-  ~/Documents/NekoPal/integrations/rvc/convert_cli.py \
+  ~/NekoPal/integrations/rvc/convert_cli.py \
   {input} {output} --model {model} --index {index} --pitch {pitch} --quiet'
 ```
 

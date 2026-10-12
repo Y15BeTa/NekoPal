@@ -68,7 +68,12 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 ## 快速开始
 
 ```bash
-cd NekoPal
+# 💡 建议装在家目录下（如 ~/NekoPal）。
+#    macOS 把「桌面 / 文稿 / 下载」当作保护目录 —— 项目放在那里，
+#    每次 App 访问都要你先点一次「允许」；放在家目录就没这回事。
+git clone https://github.com/Y15BeTa/NekoPal.git ~/NekoPal
+cd ~/NekoPal
+
 uv venv --python 3.12
 uv pip install -e ".[edge,dev,desktop]"   # desktop = 原生窗口外壳；不装也能用浏览器
 ```
@@ -85,6 +90,10 @@ uv pip install -e ".[edge,dev,desktop]"   # desktop = 原生窗口外壳；不�
 - **关闭**：**关掉窗口就够了** —— 后端与变声服务会一起停，
   所以**只需要一个 App**，不用再配一个「关闭」App
 - 卸载：`./scripts/install_macos_apps.sh --remove`
+
+> ⚠️ **第一次打开时**，macOS 会问「是否允许访问『文稿』文件夹」—— 点**允许**即可。
+> 这是因为**项目装在 `~/Documents`**（macOS 的保护目录），不是 App 在偷看你的文件。
+> **装在家目录（如 `~/NekoPal`）就不会有这一步。**
 
 ### 其他方式
 
@@ -178,7 +187,7 @@ uv run nekopal serve        # 先起服务
 
 ```jsonc
 {
-  "plugins": ["~/Documents/NekoPal/integrations/opencode-plugin"]
+  "plugins": ["~/NekoPal/integrations/opencode-plugin"]
 }
 ```
 （路径按你 clone 的实际位置改）

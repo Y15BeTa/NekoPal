@@ -20,7 +20,7 @@
 1. 先启动 NekoPal：
 
 ```bash
-cd ~/Documents/NekoPal
+cd ~/NekoPal
 uv run nekopal serve            # 默认 http://127.0.0.1:8787
 ```
 
@@ -29,7 +29,7 @@ uv run nekopal serve            # 默认 http://127.0.0.1:8787
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["~/Documents/NekoPal/integrations/opencode-plugin"]
+  "plugins": ["~/NekoPal/integrations/opencode-plugin"]
 }
 ```
 
