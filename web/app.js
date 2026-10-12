@@ -33,6 +33,26 @@ let audioUnlocked = false;
 //: （踩过：连续三轮探针都被它误导，以为 WKWebView 不允许自动播放）。
 const SILENT_PRIMER = '/silence.wav';
 
+//: 记住音色与语速（否则每次重开窗口都要重选）
+const PREFS_KEY = 'nekopal.prefs';
+
+function savePrefs() {
+  try {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ voice: els.voice.value, rate: els.rate.value })
+    );
+  } catch (err) { /* 隐私模式等场景忽略 */ }
+}
+
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') || {};
+  } catch (err) {
+    return {};
+  }
+}
+
 /** 页面是否跑在原生外壳（nekopal app）里。 */
 function isShell() {
   return new URLSearchParams(location.search).get('shell') === 'app' || !!window.pywebview;
@@ -233,11 +253,17 @@ async function loadVoices() {
     }
 
     const all = data.voices || [];
-    const preferred = all.find((v) => v.id === data.default)
+    const prefs = loadPrefs();
+    const preferred = all.find((v) => v.id === prefs.voice)      // 上次选的
+      || all.find((v) => v.id === data.default)
       || all.find((v) => v.backend === 'say' && (v.lang || []).includes('zh'))
       || all.find((v) => v.backend === 'say')
       || all[0];
     if (preferred) els.voice.value = preferred.id;
+    if (prefs.rate) {
+      els.rate.value = prefs.rate;
+      reader.setRate(parseFloat(prefs.rate));
+    }
 
     renderPackProblems(data.pack_problems || []);
     setStatus('就绪 · ' + all.length + ' 个音色');
@@ -358,7 +384,11 @@ els.clearBtn.addEventListener('click', () => {
 els.playPause.addEventListener('click', () => reader.toggle());
 els.prev.addEventListener('click', () => reader.prev());
 els.next.addEventListener('click', () => reader.next());
-els.rate.addEventListener('change', () => reader.setRate(parseFloat(els.rate.value)));
+els.rate.addEventListener('change', () => {
+  reader.setRate(parseFloat(els.rate.value));
+  savePrefs();
+});
+els.voice.addEventListener('change', savePrefs);
 
 // 用户第一次点页面任意处即解锁自动播放
 document.addEventListener('pointerdown', unlockAudio, { once: true });
