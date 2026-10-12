@@ -17,12 +17,42 @@ const els = {
   audio: $('audio'),
   soundGate: $('soundGate'),
   soundGateBtn: $('soundGateBtn'),
+  activityPanel: $('activityPanel'),
+  activityList: $('activityList'),
+  activityRefresh: $('activityRefresh'),
 };
 
 //: 当前正在读的任务；用于区分「自己点的」与「外部推来的」
 let currentTaskId = null;
 //: 浏览器是否已解锁自动播放
 let audioUnlocked = false;
+
+//: 0.1 秒真实静音 WAV——用来试探/解锁自动播放，本身不出声。
+//: ⚠️ 别用 0 字节的 data URL：Chrome 能忍，但 **WebKit 里 play() 的 Promise 永不 resolve**
+//: （踩过：连续三轮探针都被它误导，以为 WKWebView 不允许自动播放）。
+const SILENT_PRIMER = '/silence.wav';
+
+/** 页面是否跑在原生外壳（nekopal app）里。 */
+function isShell() {
+  return new URLSearchParams(location.search).get('shell') === 'app' || !!window.pywebview;
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+/** 把前端自己的关键节点也记进活动记录，便于一条命令排查整条链路。 */
+function report(event, detail) {
+  try {
+    fetch('/api/activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, source: 'reader', detail }),
+    }).catch(() => { /* 忽略 */ });
+  } catch (err) { /* 忽略 */ }
+}
 
 function setStatus(text) {
   els.status.textContent = text;
@@ -47,17 +77,84 @@ async function unlockAudio() {
   if (els.soundGate) els.soundGate.hidden = true;
 
   try {
-    // 播放一段 0 字节静音 WAV：满足"在用户手势中播放过"的条件，又不出声。
+    // 播一小段真实静音：满足"在用户手势中播放过"的条件，又不出声。
     // 用**独立的 Audio 对象**，避免污染主播放器的状态（曾导致误报"已读完"）。
-    const primer = new Audio(
-      'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
-    );
+    const primer = new Audio(SILENT_PRIMER);
     primer.muted = true;
     await primer.play();
     primer.pause();
     setStatus('声音已启用 · opencode 回答完就会自动朗读');
   } catch (err) {
     setStatus('解锁失败，请直接点一次「朗读」');
+  }
+}
+
+/**
+ * 自动播放探针（启动时跑一次）。
+ *
+ * 浏览器策略通常在**没有用户手势**时拒绝播放；但原生外壳（pywebview / WKWebView）
+ * 的策略可能更宽松。探针成功就自动解锁 —— 用户**不用再点那个提示条**。
+ * 结果写进 `/api/activity`，出问题时能直接看到。
+ */
+async function probeAutoplay() {
+  let ok = false;
+  let err = '';
+  try {
+    const primer = new Audio(SILENT_PRIMER);
+    primer.muted = true;
+    await primer.play();
+    primer.pause();
+    ok = true;
+  } catch (e) {
+    err = String(e);
+  }
+
+  report(ok ? 'autoplay-ok' : 'autoplay-blocked', {
+    shell: isShell(),
+    err: err.slice(0, 160),
+  });
+
+  if (ok) {
+    audioUnlocked = true;
+    document.body.classList.add('unlocked');
+    if (els.soundGate) els.soundGate.hidden = true;
+  } else {
+    showSoundGate();
+  }
+  return ok;
+}
+
+// ---- 最近推送 / 活动记录 --------------------------------------------
+function fmtTime(seconds) {
+  return new Date(seconds * 1000).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+async function loadActivity() {
+  const box = els.activityList;
+  if (!box) return;
+  try {
+    const res = await fetch('/api/activity?limit=20');
+    const data = await res.json();
+    const rows = data.activity || [];
+    if (!rows.length) {
+      box.innerHTML = '<div class="act-empty">（暂无记录）</div>';
+      return;
+    }
+    box.innerHTML = rows
+      .map((row) => {
+        const extra = row.detail ? JSON.stringify(row.detail) : '';
+        return (
+          '<div class="act-row">' +
+          '<span class="act-time">' + fmtTime(row.at) + '</span>' +
+          '<span class="act-event">' + escapeHtml(row.event) + '</span>' +
+          '<span class="act-detail" title="' + escapeHtml(extra) + '">' +
+          escapeHtml(extra).slice(0, 140) +
+          '</span></div>'
+        );
+      })
+      .join('');
+  } catch (err) {
+    box.textContent = '读取失败：' + err.message;
   }
 }
 
@@ -244,4 +341,14 @@ els.input.addEventListener('keydown', (event) => {
 
 loadVoices();
 connectLive();
-showSoundGate();
+probeAutoplay();
+loadActivity();
+
+if (els.activityRefresh) {
+  els.activityRefresh.addEventListener('click', loadActivity);
+}
+if (els.activityPanel) {
+  els.activityPanel.addEventListener('toggle', () => {
+    if (els.activityPanel.open) loadActivity();
+  });
+}

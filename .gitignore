@@ -25,6 +25,8 @@ voices/*/ckpt/
 *.pth
 *.ckpt
 *.safetensors
+# 例外：前端解锁自动播放用的 0.1 秒静音，属于代码资源不是素材
+!web/silence.wav
 
 # ---- 角色素材：Live2D 模型（仓库零素材原则，见 characters/README.md）----
 characters/*/model/

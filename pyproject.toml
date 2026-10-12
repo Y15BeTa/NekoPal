@@ -3,6 +3,7 @@ name = "nekopal"
 version = "0.1.0"
 description = "把一整块文字交给一个角色，读给你听"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
@@ -12,6 +13,8 @@ dependencies = [
 [project.optional-dependencies]
 # 音色丰富、需联网；缺失时自动降级到 macOS say
 edge = ["edge-tts>=6.1"]
+# 原生窗口外壳（nekopal app）
+desktop = ["pywebview>=5"]
 dev = ["pytest>=8"]
 
 [project.scripts]

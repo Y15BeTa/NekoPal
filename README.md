@@ -51,6 +51,8 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 | **opencode 自动朗读** | 回答完自动推给跟读窗，无需复制粘贴 | ✅ **已打通** |
 | **活动记录 `/api/activity`** | 记录推送来源与插件事件，出事一条命令定位 | ✅ 可用 |
 | **进度书签** | 记住读到哪，下次接着读 | 🔜 Phase 2 |
+| **原生窗口外壳** | `nekopal app`：不开浏览器、**无需点击**即可自动朗读 | ✅ 可用 |
+| **开机自启** | `nekopal autostart install`（macOS LaunchAgent） | ✅ 可用 |
 | **导出 mp3（通勤播客）** | 一键把整篇导出为音频文件 | 🔜 Phase 2 |
 | **文件模式** | 打开 `.md`，跟读窗自渲染整篇 | 🔜 Phase 2 |
 | **可插拔音色包 / 角色包** | 音色与角色 = 素材 + 规范；仓库内**不含任何受版权保护的素材** | 🔜 音色包 Phase 3 |
@@ -65,17 +67,25 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 ```bash
 cd NekoPal
 uv venv --python 3.12
-uv pip install -e ".[edge,dev]"     # 不装 edge 也可以，会退回离线 say
+uv pip install -e ".[edge,dev,desktop]"   # desktop = 原生窗口外壳；不装也能用浏览器
 
-uv run nekopal serve                # 启动本地服务（默认 http://127.0.0.1:8787）
-# 然后浏览器打开 http://127.0.0.1:8787/ ，把一整块文字粘进去点「朗读」
+uv run nekopal app                         # 🖥️ 打开原生窗口（推荐）
+#   或  uv run nekopal serve               # 只跑服务，然后浏览器访问 http://127.0.0.1:8787/
 ```
+
+**两种用法**：
+
+| 方式 | 命令 | 特点 |
+| --- | --- | --- |
+| **原生窗口**（推荐） | `nekopal app` | 像一个真的应用；**自动朗读无需任何点击**；不用管浏览器标签页 |
+| 浏览器 | `nekopal serve` + 打开 <http://127.0.0.1:8787/> | 零额外依赖；需点一次「启用自动朗读」 |
 
 命令行也可以直接读：
 
 ```bash
 uv run nekopal voices                      # 列出可用音色
 uv run nekopal read "把这段文字读给我听"    # 直接在本机播放
+uv run nekopal autostart install           # 开机自启（macOS LaunchAgent）
 ```
 
 **默认音色**：开箱只用**明确可用的来源**，无需任何额外素材——
@@ -179,7 +189,7 @@ uv run python scripts/push.py --file 讲义.md --voice edge:zh-CN-XiaoxiaoNeural
 | **Phase 0** | 打通 Edge-TTS，拿到音频 + 词级时间戳；实测本机速度 | ✅ 完成（`say` RTF≈0.13，首段 0.53s） |
 | **Phase 1 · MVP** | 整块抓取 + 后端（分句/队列/缓存/后端抽象）+ 跟读窗（高亮/滚动/语速） | ✅ 完成（`macos_ax` 划词除外） |
 | **Phase 2 · 集成** | opencode 插件 + CLI 推送 | ✅ 已闭环 |
-| **P1 · 外壳形态** | **pywebview 原生窗口**（→ 后续 Electron 桌宠） | 🔜 **下一步** |
+| **P1 · 外壳形态** | **pywebview 原生窗口**（自动朗读免点击） | ✅ **完成** |
 | **Phase 2 · 剩余** | 导出 mp3 + Follow 续读 + 进度书签 + 文件模式 | ⏳ 待开始 |
 | **Phase 3** | GPT-SoVITS 后端 + 音色包 + **角色层（Live2D + 口型同步）** | ⏳ 待开始 |
 | **Phase 4** | **桌宠模式** + 打包 `.app` + 首启向导 + 跨平台抓取层 | ⏳ 待开始 |

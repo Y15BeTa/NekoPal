@@ -1,9 +1,11 @@
 """命令行入口。
 
     nekopal serve          启动本地服务
+    nekopal app            打开原生窗口（桌面外壳）
     nekopal open           在浏览器打开跟读窗
     nekopal read "文字"    命令行直接朗读（本机播放）
     nekopal voices         列出可用音色
+    nekopal autostart ...  开机自启（macOS LaunchAgent）
 """
 
 from __future__ import annotations
@@ -99,6 +101,28 @@ def _cmd_read(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_app(args: argparse.Namespace) -> int:
+    from nekopal.desktop import run_app
+
+    settings = load_settings()
+    if args.host:
+        settings.host = args.host
+    if args.port:
+        settings.port = args.port
+    return run_app(settings, hidden=args.hidden, width=args.width, height=args.height)
+
+
+def _cmd_autostart(args: argparse.Namespace) -> int:
+    from nekopal.autostart import dispatch
+
+    settings = load_settings()
+    if args.host:
+        settings.host = args.host
+    if args.port:
+        settings.port = args.port
+    return dispatch(args.action, settings)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nekopal", description="把一整块文字交给一个角色，读给你听"
@@ -123,6 +147,21 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("--no-play", dest="play", action="store_false")
 
     sub.add_parser("voices", help="列出可用音色")
+
+    app_cmd = sub.add_parser("app", help="打开原生窗口（桌面外壳）")
+    app_cmd.add_argument("--host", default=None)
+    app_cmd.add_argument("--port", type=int, default=None)
+    app_cmd.add_argument("--hidden", action="store_true", help="不开窗，只做启动自检")
+    app_cmd.add_argument("--width", type=int, default=1040)
+    app_cmd.add_argument("--height", type=int, default=780)
+
+    auto = sub.add_parser("autostart", help="开机自启（macOS LaunchAgent）")
+    auto.add_argument(
+        "action", nargs="?", default="status", choices=["status", "install", "uninstall"]
+    )
+    auto.add_argument("--host", default=None)
+    auto.add_argument("--port", type=int, default=None)
+
     return parser
 
 
@@ -132,9 +171,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     handlers = {
         "serve": _cmd_serve,
+        "app": _cmd_app,
         "open": _cmd_open,
         "read": _cmd_read,
         "voices": _cmd_voices,
+        "autostart": _cmd_autostart,
     }
     handler = handlers.get(args.command)
     if handler is None:

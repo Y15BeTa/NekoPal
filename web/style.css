@@ -104,6 +104,34 @@ button.primary:hover { background: var(--accent-strong); border-color: var(--acc
 
 body.unlocked .sound-gate { display: none; }
 
+/* ---- 最近推送 / 活动记录 ---- */
+.activity {
+  padding: 6px 18px 10px;
+  background: #171a20;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--dim);
+}
+.activity summary { cursor: pointer; user-select: none; padding: 4px 0; }
+.activity summary:hover { color: var(--text); }
+.activity-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 6px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.act-row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  border-bottom: 1px solid #1f232a;
+}
+.act-time { flex: 0 0 62px; color: #5f6673; }
+.act-event { flex: 0 0 132px; color: var(--accent); }
+.act-detail { flex: 1; color: #8b93a3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-empty { color: #5f6673; padding: 4px 0; }
+
 /* ---- 跟读窗 ---- */
 .reader {
   flex: 1;
