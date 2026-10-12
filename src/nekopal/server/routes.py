@@ -61,6 +61,23 @@ def build_router(runtime: Runtime) -> APIRouter:
     async def capture_sources() -> dict:
         return {"sources": runtime.captures.describe()}
 
+    # -- 活动记录（排查集成问题用；也是未来「最近推送」界面的数据源）------
+    @router.get("/activity")
+    async def get_activity(limit: int = 30) -> dict:
+        size = max(1, min(int(limit), 100))
+        return {"activity": list(runtime.activity)[:size]}
+
+    @router.post("/activity", status_code=201)
+    async def post_activity(request: Request) -> dict:
+        data = await _json(request)
+        if not isinstance(data, dict):
+            raise _invalid("请求体必须是 JSON 对象")
+        return runtime.record(
+            str(data.get("event") or "unknown"),
+            source=str(data.get("source") or "unknown"),
+            detail=data.get("detail"),
+        )
+
     # -- 设置 ------------------------------------------------------------
     @router.get("/settings")
     async def get_settings() -> dict:
@@ -121,6 +138,14 @@ def build_router(runtime: Runtime) -> APIRouter:
             ),
         )
         task.start(runtime.tts, runtime.cache)
+
+        runtime.record(
+            "read",
+            source=str(req.source.get("app") or req.source.get("kind") or "unknown"),
+            voice=req.voice,
+            sentences=len(sentences),
+            chars=len(req.text),
+        )
 
         return {
             "task_id": task.id,

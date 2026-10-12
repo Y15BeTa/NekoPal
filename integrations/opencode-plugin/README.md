@@ -34,16 +34,35 @@ uv run nekopal serve            # 默认 http://127.0.0.1:8787
 
 ## 排查
 
-日志位置：`~/.local/share/opencode/log/opencode.log`
+### 一、看 NekoPal 的活动记录（最快）
 
-以 `NEKOPAL_DEBUG=1` 启动 opencode，然后搜索 `[nekopal]`：
+插件会把关键节点记到 NekoPal，直接查就行：
+
+```bash
+curl -s http://127.0.0.1:8787/api/activity | python3 -m json.tool
+```
+
+| `event` | 含义 | 下一步 |
+| --- | --- | --- |
+| `plugin-ready` | 插件已加载并开始订阅事件 | 正常 |
+| `idle` | 收到会话完成事件 | 正常；看后面还有没有别的记录 |
+| `no-answer` | 会话里没有足够长的助手消息 | 回答太短（默认 <60 字不读），或 `NEKOPAL_MIN_CHARS` 太大 |
+| `no-session-id` | **定位不到 sessionID** | 事件结构变了，把 `detail.dump` 发给维护者 |
+| `pushed` | **推送成功** | 搞定 |
+| `push-failed` | NekoPal 拒绝了请求 | 看 `detail.status`，通常是服务没起或版本不匹配 |
+| `error` | 插件内部报错 | 看 `detail.message` |
+
+### 二、看 opencode 日志
+
+日志位置：`~/.local/share/opencode/log/opencode.log`
 
 | 现象 | 含义 | 怎么办 |
 | --- | --- | --- |
-| 完全搜不到 `[nekopal]` | 插件没被加载 | 检查 `plugins` 配置路径是否正确、opencode 是否重启过 |
-| 有 `event: session.idle`，但没有「已推送」 | 定位不到 `sessionID`，或没有足够长的助手消息 | 把 `[nekopal] 未能从事件中定位 sessionID` 附近的日志发给维护者 |
-| 有「已推送」但 NekoPal 没反应 | 服务没起，或地址不对 | `curl $NEKOPAL_BASE/api/health` 确认 |
-| 推送失败 HTTP 404/501 | NekoPal 版本不匹配 | 确认 NekoPal 是最新的 |
+| 搜不到 `loading plugin` | 插件没被加载 | 检查 `plugins` 配置路径、重启 opencode |
+| 有 `loading plugin` 但 `/api/activity` 是空的 | `setup` 没跑或订阅没建立 | 把日志给我 |
+| 推送失败 HTTP 501/404 | NekoPal 版本不匹配 | 更新 NekoPal |
+
+> 💡 NekoPal 会自动**热重载**插件（它监听插件目录），改完 `index.ts` 通常不用重启 opencode。
 
 ## 实现说明
 

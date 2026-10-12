@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Deque, Dict, Optional
 
 from nekopal.avatar.registry import AvatarRegistry, build_avatar_registry
 from nekopal.capture.registry import CaptureRegistry, build_capture_registry
@@ -22,6 +24,8 @@ class Runtime:
     tasks: TaskRegistry = field(default_factory=TaskRegistry)
     captures: CaptureRegistry = field(default_factory=build_capture_registry)
     avatars: AvatarRegistry = field(default_factory=build_avatar_registry)
+    #: 最近的活动记录（推送来源、插件事件、错误……）——排查集成问题时看它
+    activity: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=100))
 
     @classmethod
     def build(cls, settings: Optional[Settings] = None) -> "Runtime":
@@ -31,6 +35,13 @@ class Runtime:
             tts=build_registry(),
             cache=AudioCache(settings.cache_dir, max_mb=settings.cache_max_mb),
         )
+
+    def record(self, event: str, **fields: Any) -> Dict[str, Any]:
+        entry: Dict[str, Any] = {"at": time.time(), "event": event}
+        entry.update(fields)
+        self.activity.appendleft(entry)
+        return entry
+
 
     async def warmup(self) -> None:
         """启动时预热（设计文档 R5）：把 ``say`` 音色枚举跑掉，避免首次请求卡顿。"""

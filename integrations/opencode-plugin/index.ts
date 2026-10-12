@@ -88,10 +88,31 @@ async function push(text: string, sessionID: string): Promise<void> {
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     console.warn(`[nekopal] 推送失败 HTTP ${response.status} ${detail.slice(0, 200)}`);
+    await report("push-failed", { sessionID, status: response.status, detail: detail.slice(0, 200) });
     return;
   }
   if (DEBUG) {
     console.log(`[nekopal] 已推送 ${text.length} 字（session ${sessionID}）`);
+  }
+  await report("pushed", { sessionID, chars: text.length });
+}
+
+/**
+ * 向 NekoPal 汇报一次活动。
+ *
+ * 插件的成功路径是静默的，出了问题很难查 —— 所以把关键节点记到 NekoPal 的
+ * `/api/activity`，用 `GET /api/activity` 就能看到「到底走到哪一步」。
+ * 汇报失败绝不影响朗读主流程。
+ */
+async function report(event: string, detail?: unknown): Promise<void> {
+  try {
+    await fetch(`${BASE}/api/activity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, source: "opencode-plugin", detail }),
+    });
+  } catch {
+    /* 忽略：NekoPal 没起也不该影响 opencode */
   }
 }
 
@@ -102,6 +123,8 @@ export default {
     const controller = new AbortController();
     const seen: string[] = [];
 
+    void report("plugin-ready", { base: BASE, minChars: MIN_CHARS });
+
     void (async () => {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         const type = (event as AnyRecord)?.type;
@@ -109,24 +132,25 @@ export default {
         if (type !== "session.idle") continue;
 
         const payload = (event as AnyRecord).data ?? (event as AnyRecord).properties ?? {};
+        await report("idle", { outcome: payload.outcome ?? null });
         // 只在成功的收尾动作上朗读；失败/中断不读
         if (payload.outcome && payload.outcome !== "succeeded") continue;
 
         const sessionID = findSessionID(event);
         if (!sessionID) {
-          if (DEBUG) {
-            console.warn(
-              "[nekopal] 未能从事件中定位 sessionID。请把这一行附近的日志发给维护者：",
-              JSON.stringify(event).slice(0, 500)
-            );
-          }
+          const dump = JSON.stringify(event ?? {}).slice(0, 600);
+          if (DEBUG) console.warn("[nekopal] 未能从事件中定位 sessionID：", dump);
+          await report("no-session-id", { dump });
           continue;
         }
 
         try {
           const messages = ((await ctx.session.context({ sessionID })) ?? []) as AnyRecord[];
           const answer = latestReadableAnswer(messages);
-          if (!answer) continue;
+          if (!answer) {
+            await report("no-answer", { sessionID, messages: messages.length, minChars: MIN_CHARS });
+            continue;
+          }
           if (seen.includes(answer.id)) continue; // 同一轮不重复朗读
 
           seen.push(answer.id);
@@ -135,6 +159,7 @@ export default {
           await push(answer.text, sessionID);
         } catch (error) {
           console.warn("[nekopal] 处理 session.idle 失败:", String(error));
+          await report("error", { sessionID, message: String(error).slice(0, 300) });
         }
       }
     })();
