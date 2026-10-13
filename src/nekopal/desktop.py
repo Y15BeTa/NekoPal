@@ -253,7 +253,7 @@ def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
             print("后端启动失败：请手动运行 `nekopal serve` 后再试。", file=sys.stderr)
 
     width, height = PET_SIZE
-    window = webview.create_window(
+    webview.create_window(
         PET_TITLE,
         base + "/pet.html",
         width=width,
