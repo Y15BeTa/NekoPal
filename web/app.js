@@ -506,7 +506,7 @@ function initTray() {
     panes.forEach((p) => { p.hidden = p.dataset.pane !== name; });
     // 打开那一刻加载（活动记录 / 聊天状态都要现拉）
     if (name === 'activity') loadActivity();
-    if (name === 'chat') loadChatStatus();
+    if (name === 'chat') { loadChatStatus(); loadLines(); }
     if (name === 'settings') loadSettings();
     if (name === 'export') refreshCacheInfo();
   }
@@ -618,10 +618,19 @@ async function loadChatStatus() {
     return;
   }
 
+  const pool = Number(d.lines_count || 0);
+  const src = await loadLineSource();
+  const modeText = src === 'live'
+    ? '每次点击让模型现编一句（慢几秒，但更应景）'
+    : (pool
+      ? '点击时从下面的台词池里抽（快）· 池里 ' + pool + ' 条'
+      : '点击时想现编，但池子是空的 —— 会退回固定那几句');
+
   const rows = [
     d.enabled
-      ? '✅ 已启用 —— 点角色时由模型现编一句（模型：' + d.model + '）'
-      : '⬜ 未配置 —— 现在用固定的那几句静态台词（完全能玩，想升级就填下面两个文件）',
+      ? '✅ 已启用 —— ' + modeText
+      : '⬜ 未配置大模型 —— 现在用固定的那几句静态台词（完全能玩，想升级就填下面两个文件）',
+    d.enabled ? '🧠 模型：' + d.model : '',
     '⚙️ 大模型配置：' + d.chat_file,
     '   · api_key：' + (d.has_key
       ? '已填 ✅（接口只回报“有没有”，不会返回内容）'
@@ -633,7 +642,7 @@ async function loadChatStatus() {
         ? '已填 ✅ ~/.config/nekopal/characters/<角色 id>/persona.md'
         : '未填 ⬜（会用仓库里的示例 characters/example-rana/persona.md）'),
     '⚠️ 两条红线：api_key 别提交进任何仓库；profile.md 里别放不该外发的东西',
-  ];
+  ].filter(Boolean);
 
   body.innerHTML = '';
   for (const t of rows) {
@@ -654,10 +663,197 @@ function initChatPanel() {
       // 打不开就算了 —— 界面上本来就写了路径
     }
   });
-  refreshBtn?.addEventListener('click', loadChatStatus);
+  refreshBtn?.addEventListener('click', () => {
+    refreshBtn.disabled = true;
+    Promise.all([loadChatStatus(), loadLines()]).finally(() => {
+      refreshBtn.disabled = false;
+    });
+  });
 }
 
 initChatPanel();
+
+// ── 🎬 预生成台词池 ────────────────────────────────────────────────────
+// 起因：`/api/avatar/chat` 每次点击都现打一次 LLM —— 点一下要等好几秒，
+// 完全不像「随口一句」。改成**一次生成几十条存档**，点击时从池子里抽：
+//   · 零延迟（同一句第二次连音频都走缓存）
+//   · 一轮内不重复（后端用「抽签袋」）
+//   · **看得见、改得动** —— 不喜欢的句子（比如叹气太多的）直接删
+let linesData = null;
+
+function fmtWhen(ts) {
+  if (!ts) return '—';
+  try {
+    return new Date(ts * 1000).toLocaleString();
+  } catch (err) {
+    return '—';
+  }
+}
+
+async function loadLines() {
+  const meta = document.getElementById('linesMeta');
+  const list = document.getElementById('linesList');
+  if (!list) return;
+
+  let d;
+  try {
+    d = await (await fetch('/api/lines')).json();
+  } catch (err) {
+    if (meta) meta.textContent = '读不到台词池';
+    return;
+  }
+  linesData = d;
+
+  if (meta) {
+    if (!d.count) {
+      meta.textContent = '还没有 —— 点「生成台词」';
+    } else {
+      const bits = ['已存 ' + d.count + ' 条', fmtWhen(d.generated_at), d.model || '?'];
+      if (d.stale) bits.push('⚠️ 人设或私人信息改过了，建议重新生成');
+      meta.textContent = bits.join(' · ');
+    }
+  }
+
+  list.innerHTML = '';
+  if (!d.count) {
+    const empty = document.createElement('div');
+    empty.className = 'act-empty';
+    empty.textContent = d.enabled
+      ? '（还是空的。上面点「生成台词」，几十秒就好。）'
+      : '（没配大模型 —— 生成不了。先在上面填 chat.yaml。）';
+    list.append(empty);
+    return;
+  }
+
+  d.lines.forEach((text, i) => {
+    const row = document.createElement('div');
+    row.className = 'line-row';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = text;
+    input.title = '改完点别处即保存';
+
+    const del = document.createElement('button');
+    del.className = 'ghost line-del';
+    del.textContent = '✕';
+    del.title = '删掉这句';
+    del.addEventListener('click', () => {
+      const now = collectLines();
+      now.splice(i, 1);
+      putLines(now, true);
+    });
+
+    row.append(input, del);
+    list.append(row);
+  });
+}
+
+function collectLines() {
+  const list = document.getElementById('linesList');
+  if (!list) return [];
+  return Array.from(list.querySelectorAll('input')).map((el) => el.value.trim()).filter(Boolean);
+}
+
+async function putLines(lines, rerender) {
+  const st = document.getElementById('linesStatus');
+  try {
+    const res = await fetch('/api/lines', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines }),
+    });
+    const d = await res.json();
+    if (!res.ok) {
+      if (st) st.textContent = '✗ 保存失败';
+      return;
+    }
+    linesData = d;
+    if (rerender) await loadLines();
+    else if (st) st.textContent = '已保存 ✅（' + d.count + ' 条）';
+  } catch (err) {
+    if (st) st.textContent = '✗ ' + err;
+  }
+}
+
+async function generateLines() {
+  const btn = document.getElementById('linesGen');
+  const st = document.getElementById('linesStatus');
+  const count = parseInt(document.getElementById('linesCount').value, 10) || 30;
+  if (btn) btn.disabled = true;
+  if (st) st.textContent = '生成中…（一次写 ' + count + ' 句，别关窗口）';
+  try {
+    const res = await fetch('/api/lines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count }),
+    });
+    const d = await res.json();
+    if (!res.ok) {
+      if (st) st.textContent = '✗ ' + (d?.detail?.message || ('HTTP ' + res.status));
+      return;
+    }
+    linesData = d;
+    await loadLines();
+    if (st) st.textContent = '✅ 生成 ' + d.count + ' 条 —— 可以直接改 / 删';
+    loadActivity();
+  } catch (err) {
+    if (st) st.textContent = '✗ ' + err;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function clearLines() {
+  if (!window.confirm('清空台词池？点角色时会退回「每次现编」（慢）。')) return;
+  const st = document.getElementById('linesStatus');
+  try {
+    await fetch('/api/lines', { method: 'DELETE' });
+    await loadLines();
+    if (st) st.textContent = '已清空';
+  } catch (err) {
+    if (st) st.textContent = '✗ ' + err;
+  }
+}
+
+async function loadLineSource() {
+  const sel = document.getElementById('lineSource');
+  if (!sel) return 'pool';
+  let value = 'pool';
+  try {
+    const ui = await (await fetch('/api/ui')).json();
+    value = ui.line_source || 'pool';
+    sel.value = value;
+  } catch (err) { /* 读不到就用默认 */ }
+  return value;
+}
+
+function initLinesPanel() {
+  const list = document.getElementById('linesList');
+  if (!list) return;
+
+  // 改完点别处（失焦）→ 整份存回去。用事件委托，只挂一次。
+  list.addEventListener('change', (event) => {
+    if (event.target && event.target.tagName === 'INPUT') putLines(collectLines(), false);
+  });
+
+  document.getElementById('linesGen')?.addEventListener('click', generateLines);
+  document.getElementById('linesClear')?.addEventListener('click', clearLines);
+
+  const sel = document.getElementById('lineSource');
+  sel?.addEventListener('change', async () => {
+    try {
+      await fetch('/api/ui', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_source: sel.value }),
+      });
+      setStatus(sel.value === 'pool' ? '点击时从台词池抽（快）' : '点击时每次现编（慢，更应景）');
+    } catch (err) { /* 忽略 */ }
+  });
+}
+
+initLinesPanel();
 
 // ── ⚙️ 设置面板 ───────────────────────────────────────────────────────
 // 以前这些开关**后端都有、界面一个都没有**（只能改 ~/.config/nekopal/*.json）。

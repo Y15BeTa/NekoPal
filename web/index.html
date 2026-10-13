@@ -151,8 +151,36 @@
       </p>
     </div>
 
-    <!-- ③ 角色聊天 -->
+    <!-- ③ 角色聊天 + 预生成台词池 -->
     <div class="pane" id="chatPanel" data-pane="chat" role="tabpanel" hidden>
+      <div class="lines-box">
+        <div class="lines-head">
+          <b>🎬 预生成台词</b>
+          <span class="dim" id="linesMeta">…</span>
+        </div>
+        <p class="note">
+          一次让模型写几十句<b>存着</b>，点角色时<b>直接从里面抽</b> —— 瞬间出声，不用等它想。
+          生成完这里会列出来，<b>可以直接改文字、也可以删掉不喜欢的句子</b>（比如叹气太多的）。
+        </p>
+        <div class="lines-actions">
+          <label class="field"><span>条数</span>
+            <input type="number" id="linesCount" min="5" max="80" step="5" value="30">
+          </label>
+          <label class="field"><span>点击时说</span>
+            <select id="lineSource">
+              <option value="pool">从台词池里抽（快）</option>
+              <option value="live">每次现编（慢，但更应景）</option>
+            </select>
+          </label>
+          <button id="linesGen" class="primary">生成台词</button>
+          <button id="linesClear" class="ghost">清空</button>
+          <span class="dim" id="linesStatus"></span>
+        </div>
+        <div class="lines-list" id="linesList">
+          <div class="act-empty">（加载中…）</div>
+        </div>
+      </div>
+
       <div id="chatBody" class="activity-list">
         <div class="act-empty">（展开后加载）</div>
       </div>

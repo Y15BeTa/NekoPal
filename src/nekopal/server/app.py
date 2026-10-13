@@ -105,6 +105,7 @@ def _restore_ui_voice(runtime: "Runtime") -> None:
             ("auto_scroll", str),
             ("prefetch", int),
             ("cache_max_mb", int),
+            ("line_source", str),
         ):
             if key in data and data[key] is not None:
                 try:

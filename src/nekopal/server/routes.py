@@ -50,6 +50,8 @@ def _load_ui() -> dict:
         "auto_scroll": "center",
         "prefetch": 3,
         "cache_max_mb": 500,
+        # 🌟 点击角色时，台词从哪来 ✗：`pool` 抽预生成的（快 ✅）/ `live` 每次现编（慢 ✗）
+        "line_source": "pool",
     }
     try:
         data = json.loads(_ui_file().read_text(encoding="utf-8"))
@@ -829,6 +831,85 @@ def build_router(runtime: Runtime) -> APIRouter:
         cid = character or _load_ui().get("character") or None
         return {"lines": _voice_lines(cid)}
 
+    # -- 预生成台词池 ------------------------------------------------------
+    # 为什么有这套 ✗：`/api/avatar/chat` 每次点击都打一次 LLM ✗，要等好几秒 ✗。
+    # 改成**一次生成几十条存档**✗，点击时从池子里抽 ✅ —— 零延迟、也不像"在等程序"✗。
+    #
+    # ⚠️ 池子 = profile.md（私人信息）的衍生物 ✗ → 存在**仓库外**✗：
+    #    `~/.config/nekopal/characters/<id>/lines.json`
+
+    @router.get("/lines")
+    async def lines_get(character: str = "") -> dict:
+        """台词池现状（有几条 / 什么时候生成的 / 过时了没 ✗）。"""
+
+        from nekopal import chat as chat_mod
+
+        cid = character or _load_ui().get("character") or None
+        return chat_mod.lines_status(cid)
+
+    @router.post("/lines")
+    async def lines_generate(request: Request) -> dict:
+        """**一次生成一整批**台词并存档 ✗（要等几秒到几十秒 ✗）。
+
+        ⚠️ 必须丢到线程里跑 ✗ —— 它是同步阻塞的 HTTP 调用，
+        直接 await 会把整个事件循环卡住（跟读窗也会没反应 ✗）。
+        """
+
+        from nekopal import chat as chat_mod
+
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        cid = (str(payload.get("character") or "").strip()
+               or _load_ui().get("character") or None)
+        count = payload.get("count") or chat_mod.DEFAULT_BATCH
+
+        try:
+            data = await asyncio.to_thread(chat_mod.generate_lines, cid, count)
+        except Exception as exc:  # noqa: BLE001 - 失败要让界面上看得见 ✗
+            runtime.record("lines-generate-failed", error=str(exc)[:160])
+            raise HTTPException(
+                502, {"code": "LINES_FAILED", "message": str(exc)[:200]}
+            ) from None
+
+        runtime.record("lines-generated", count=data["count"], model=data["model"])
+        return data
+
+    @router.put("/lines")
+    async def lines_put(request: Request) -> dict:
+        """**整份替换**台词池 ✗ —— 给你在界面上改 / 删掉那几句不喜欢的 ✅。"""
+
+        from nekopal import chat as chat_mod
+
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            raise _invalid("JSON 格式不对") from None
+        if not isinstance(payload, dict) or not isinstance(payload.get("lines"), list):
+            raise _invalid("要传 {\"lines\": [\"...\", ...]}")
+
+        cid = (str(payload.get("character") or "").strip()
+               or _load_ui().get("character") or None)
+        lines = [str(x) for x in payload["lines"] if str(x).strip()]
+        data = chat_mod.save_lines(cid, lines)
+        runtime.record("lines-edited", count=data["count"])
+        return data
+
+    @router.delete("/lines")
+    async def lines_clear(character: str = "") -> dict:
+        """清空台词池 ✗。"""
+
+        from nekopal import chat as chat_mod
+
+        cid = character or _load_ui().get("character") or None
+        data = chat_mod.clear_lines(cid)
+        runtime.record("lines-cleared")
+        return data
+
     @router.post("/avatar/say")
     async def avatar_say(request: Request) -> dict:
         """合成**一句话**给角色窗口播放 ✗。
@@ -931,12 +1012,42 @@ def build_router(runtime: Runtime) -> APIRouter:
         chat_mod.save_config(payload)
         return chat_mod.public_status()
 
+    #: 正在后台补池子的角色 ✗（防止并发重复生成 ✗）
+    _refilling: set = set()
+
+    def _schedule_refill(character, have: int) -> None:
+        """池子快见底时，**后台悄悄再生成一批** ✅（失败静默 ✗）。
+
+        为什么后台 ✗：补池子要好几秒 ✗ —— 绝不能让你点一下等它 ✗。
+        """
+
+        from nekopal import chat as chat_mod
+
+        if have > 5 or character in _refilling or not chat_mod.is_enabled():
+            return
+        _refilling.add(character)
+
+        def _work() -> None:
+            try:
+                data = chat_mod.generate_lines(character, chat_mod.DEFAULT_BATCH)
+                runtime.record("lines-refilled", count=data["count"], reason="low")
+            except Exception as exc:  # noqa: BLE001 - 后台失败不打扰用户 ✗
+                runtime.record("lines-refill-failed", error=str(exc)[:120])
+            finally:
+                _refilling.discard(character)
+
+        import threading
+
+        threading.Thread(target=_work, daemon=True, name="nekopal-lines").start()
+
     @router.post("/avatar/chat")
     async def avatar_chat(request: Request) -> dict:
-        """**AI 生成一句 + 合成** ✗ —— 角色窗口点一下时用这个。
+        """**挑一句台词 + 合成** —— 角色窗口点一下时用这个。
 
-        没配 LLM、或生成失败时，**自动退回角色包里的静态台词** ✅
-        （所以"不配也能用"✗，只是台词是固定那几句 ✗）
+        优先级（`ui.json` 的 `line_source` ✗）：
+        - `pool`（默认 ✗）：从**预生成的台词池**里抽 ✅ —— **零延迟** ✅
+        - `live`：每次都让模型现编 ✗ —— 更应景，但要等几秒 ✗
+        池子空了 / 没配 LLM / 生成失败 → 自动退回角色包的静态台词 ✅
         """
 
         from nekopal import chat as chat_mod
@@ -947,19 +1058,40 @@ def build_router(runtime: Runtime) -> APIRouter:
             payload = {}
         character = str((payload or {}).get("character") or "").strip() or None
 
+        enabled = chat_mod.is_enabled()
+        pool = chat_mod.load_lines(character)["lines"] if enabled else []
+        mode = str(_load_ui().get("line_source") or "pool")
+
         generated = None
         note = "static"
-        if chat_mod.is_enabled():
+
+        # ① 预生成池（快 ✅）
+        if enabled and mode == "pool" and pool:
+            picked = chat_mod.pick_line(character, pool)
+            if picked:
+                generated = {"text": picked, "model": "(pool)"}
+                note = "pool"
+                _schedule_refill(character, len(pool))
+
+        # ② 现编（慢 ✗，但应景 ✅）
+        if generated is None and enabled:
             try:
-                generated = chat_mod.generate_line(character)
+                generated = await asyncio.to_thread(chat_mod.generate_line, character)
                 note = "ai"
             except Exception as exc:  # noqa: BLE001 - 生成失败不是错误 ✗
                 note = "static-after-{}".format(type(exc).__name__)
                 runtime.record("avatar-chat-failed", error=str(exc)[:120])
 
+        # ③ 现编失败了，但池子里还有 → 用池子兜底 ✅
+        if generated is None and pool:
+            picked = chat_mod.pick_line(character, pool)
+            if picked:
+                generated = {"text": picked, "model": "(pool)"}
+                note = "pool-fallback"
+
+        # ④ 什么都没有 → 角色包的静态台词 ✅（"不配也能用"✗）
         if generated is None:
-            lines = _voice_lines(character)
-            generated = {"text": random.choice(lines), "model": "(static)"}
+            generated = {"text": random.choice(_voice_lines(character)), "model": "(static)"}
 
         text = str(generated["text"])[:200]
         options = SynthOptions.from_dict({})

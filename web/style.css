@@ -269,6 +269,55 @@ body.unlocked .sound-gate { display: none; }
 .switch .sw-text b { font-size: 13px; font-weight: 600; color: var(--text); }
 .switch .sw-text em { font-style: normal; font-size: 11px; color: var(--faint); }
 
+/* ---- 预生成台词池 ------------------------------------------------------ */
+
+.lines-box {
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-3);
+  background: #1a1e25;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.lines-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.lines-head b { color: var(--text); }
+.lines-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-top: var(--sp-2);
+}
+.lines-list {
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.line-row { display: flex; align-items: center; gap: 6px; }
+.line-row input[type="text"] {
+  flex: 1;
+  font-size: 13px;
+  padding: 4px 8px;
+  background: #14161a;
+  border-color: #262b34;
+}
+.line-row input[type="text"]:hover { border-color: var(--line-hi); }
+.line-del {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.line-del:hover { color: #ff8b8b; border-color: #7a3a3a; background: #2a1b1b; }
+
 /* ---- 活动记录列表 ------------------------------------------------------ */
 
 .activity-list {
