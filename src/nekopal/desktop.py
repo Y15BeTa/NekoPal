@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -299,6 +300,43 @@ def run_pet(
             child.terminate()
 
 
+def _show_avatar_wanted() -> bool:
+    """读 ui.json 看主窗要不要开人物形象（没有 / 坏了 → 默认开 ✗）。"""
+
+    try:
+        from nekopal.packs import config_dir
+
+        data = json.loads((config_dir() / "ui.json").read_text(encoding="utf-8"))
+        return bool(data.get("show_avatar", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def spawn_pet(settings: Settings) -> Optional[subprocess.Popen]:
+    """把「角色窗口」作为子进程拉起来（跟主窗一起开 ✗）。
+
+    用户要的是"点开 App 就有人物" ✗ —— 所以由主窗负责带它起来，
+    主窗关掉时一起收掉（跟变声服务一样的处理 ✗）。
+    """
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "nekopal",
+        "pet",
+        "--host",
+        settings.host,
+        "--port",
+        str(settings.port),
+    ]
+    try:
+        return subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def run_app(
     settings: Optional[Settings] = None,
     hidden: bool = False,
@@ -334,6 +372,15 @@ def run_app(
         # 自检模式：仍然创建 WebView（页面会执行），但不显示窗口
         print("NekoPal {} · 外壳自检（窗口隐藏）· {}".format(__version__, url))
 
+    # 人物形象：跟主窗**一起开** ✗
+    # 用户要的是"点开 App 就有人物" ✗ —— 由主窗负责带它起来、关窗时一起收掉
+    # 开关读 ui.json（主窗的「形象」下拉会写它 ✗）；隐藏自检模式不开 ✗
+    pet: Optional[subprocess.Popen] = None
+    if not hidden and _show_avatar_wanted():
+        pet = spawn_pet(settings)
+        if pet is not None:
+            print("角色窗口已拉起（关掉主窗会一起关）")
+
     webview.create_window(
         WINDOW_TITLE,
         url,
@@ -351,6 +398,8 @@ def run_app(
             storage_path=str(settings.cache_dir / "webview"),
         )
     finally:
+        if pet is not None and pet.poll() is None:
+            pet.terminate()
         if child is not None and child.poll() is None:
             child.terminate()
 

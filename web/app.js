@@ -487,3 +487,61 @@ if (els.activityPanel) {
     if (els.activityPanel.open) loadActivity();
   });
 }
+
+// ── 形象下拉（主窗 ↔ 角色窗口 共享）──────────────────────────────────────
+// 音色下拉在顶栏本来就有；形象这块：写进后端 /api/ui，
+// 角色窗口每 3 秒轮询一次 → 跟着换（两个进程只能这么通信）。
+// 选「不开人物」= show_avatar:false → 角色窗口会自己退出。
+async function initOutfitPicker() {
+  const sel = document.getElementById('outfit');
+  if (!sel) return;
+
+  let info;
+  try {
+    info = await (await fetch('/api/avatar')).json();
+  } catch (err) {
+    sel.disabled = true;
+    return;
+  }
+
+  const active = (info.characters || []).find((c) => c.id === info.active);
+  const outfits = active?.outfits || [];
+
+  sel.innerHTML = '';
+  const off = document.createElement('option');
+  off.value = '';
+  off.textContent = '不开人物';
+  sel.append(off);
+
+  for (const o of outfits) {
+    const opt = document.createElement('option');
+    opt.value = o.folder;
+    // 把「有几个动作/表情/有没有物理」直接写在选项里 —— 差异很大，选之前就该看见
+    const bits = [];
+    if (o.motions.length) bits.push(o.motions.length + ' 组动作');
+    if (o.expressions.length) bits.push(o.expressions.length + ' 表情');
+    if (o.physics) bits.push('物理');
+    opt.textContent = o.label + (bits.length ? '　' + bits.join(' · ') : '');
+    sel.append(opt);
+  }
+
+  // 初始选中：ui.json 里选过的优先，否则用 character.yaml 配的那个
+  const byUi = outfits.find((o) => o.folder === info.active_outfit);
+  const byCfg = outfits.find((o) => active?.model?.startsWith(o.path));
+  sel.value = (byUi || byCfg)?.folder || '';
+
+  sel.addEventListener('change', async () => {
+    const folder = sel.value;
+    try {
+      await fetch('/api/ui', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ show_avatar: !!folder, outfit: folder || null }),
+      });
+    } catch (err) {
+      // 失败就算了 —— 下次再点
+    }
+  });
+}
+
+initOutfitPicker();

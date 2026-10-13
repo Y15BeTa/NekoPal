@@ -23,6 +23,41 @@ from nekopal.server.schemas import InvalidRequest, parse_append_request, parse_r
 from nekopal.server.state import Runtime
 
 
+def _ui_file() -> Path:
+    return config_dir() / "ui.json"
+
+
+def _load_ui() -> dict:
+    """主窗与角色窗口**共享**的偏好（形象开关 / 选哪个形象 ✗）。
+
+    为什么放在后端而不是 localStorage：角色窗口是**另一个进程** ✗，
+    localStorage 它读不到。所以两边都问后端要 ✗
+    （音色不在这儿 —— 它由主窗的 localStorage + `/api/packs` 已经管好了 ✗）。
+    """
+
+    defaults = {"show_avatar": True, "outfit": None}
+    try:
+        data = json.loads(_ui_file().read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - 没有 / 坏了都当默认值
+        return defaults
+    if isinstance(data, dict):
+        defaults.update({k: v for k, v in data.items() if k in defaults})
+    return defaults
+
+
+def _save_ui(data: dict) -> dict:
+    merged = _load_ui()
+    merged.update({k: v for k, v in (data or {}).items() if k in merged})
+    try:
+        _ui_file().parent.mkdir(parents=True, exist_ok=True)
+        _ui_file().write_text(
+            json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:  # noqa: BLE001 - 写不进去也不该让请求失败
+        pass
+    return merged
+
+
 def _outfit_label(folder: str) -> str:
     """把形象目录名翻成人话（右键菜单里要显示 ✗）。"""
 
@@ -558,6 +593,25 @@ def build_router(runtime: Runtime) -> APIRouter:
     # 而 `StaticFiles` 只挂了 `web/` —— 前端够不着。
     # 顺带把 Core 挡在这一层：它**不进仓库**（见 characters/README.md 的红线）。
 
+    # -- UI 偏好（主窗 ↔ 角色窗口 共享 ✗）---------------------------------
+    @router.get("/ui")
+    async def get_ui() -> dict:
+        """主窗与角色窗口共享的偏好：要不要开人物、选哪个形象。"""
+
+        return _load_ui()
+
+    @router.put("/ui")
+    async def put_ui(request: Request) -> dict:
+        """合并式更新（只传想改的字段 ✓）。"""
+
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            raise _invalid("JSON 格式不对") from None
+        if not isinstance(payload, dict):
+            raise _invalid("要传一个对象")
+        return _save_ui(payload)
+
     @router.get("/avatar")
     async def avatar() -> dict:
         """当前可用的角色形象 + 每个形象的**动作分组 / 表情**（右键菜单要用）。
@@ -590,7 +644,13 @@ def build_router(runtime: Runtime) -> APIRouter:
                     "outfits": _list_outfits(Path(c.path)),
                 }
             )
-        return {"characters": out, "active": out[0]["id"] if out else None}
+        return {
+            "characters": out,
+            "active": out[0]["id"] if out else None,
+            # 主窗选中的形象（ui.json ✗）—— 角色窗口优先用它 ✗
+            "active_outfit": _load_ui().get("outfit"),
+            "show_avatar": bool(_load_ui().get("show_avatar", True)),
+        }
 
     @router.get("/avatar-l2d/{file_path:path}")
     async def avatar_l2d(file_path: str) -> FileResponse:

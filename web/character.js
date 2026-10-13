@@ -418,22 +418,53 @@ async function boot() {
   const active = (avatarInfo.characters || []).find((c) => c.id === avatarInfo.active);
   if (!active || !active.url) return log('没有「形象就绪」的角色包');
 
-  const o = (active.outfits || []).find((x) => active.model?.startsWith(x.path));
-  currentOutfit = o ? o.folder : active.outfits?.[0]?.folder ?? null;
+  // 主窗选中的形象优先（ui.json ✗）；没选过就用 character.yaml 里配的那个
+  const chosen = (active.outfits || []).find(
+    (x) => x.folder === avatarInfo.active_outfit,
+  );
+  const o = chosen || (active.outfits || []).find((x) => active.model?.startsWith(x.path));
+  currentOutfit = o ? o.folder : null;
   log(
     '角色：' + active.name + ' · 形象 ' + (o ? o.label : '?') +
       ' · 可选 ' + (active.outfits || []).length + ' 个',
   );
 
+  const url = chosen ? '/api/avatar/' + avatarInfo.active + '/' + chosen.path : active.url;
   try {
-    await mountModel(active.url);
+    await mountModel(url);
   } catch (err) {
     log('Live2D 挂载失败 ✗ ' + (err && err.message ? err.message : err));
+  }
+}
+
+/**
+ * 跟主窗保持同步：主窗的「形象」下拉改了，这里要跟着换 ✗；
+ * 主窗取消勾选 → 自己退出 ✗。
+ *
+ * 为什么要轮询：主窗和角色窗口是**两个进程** ✗，
+ * 中间只有后端这一条路（设计文档 6.9 ✗）。
+ */
+async function pollUi() {
+  try {
+    const ui = await (await fetch('/api/ui')).json();
+    if (ui.show_avatar === false) {
+      log('主窗要求关掉人物 → 退出角色窗口');
+      if (native) toNative('quit');
+      else window.close();
+      return;
+    }
+    if (ui.outfit && ui.outfit !== currentOutfit) {
+      const o = (avatarInfo?.outfits || []).find((x) => x.folder === ui.outfit);
+      if (o) await switchOutfit(o);
+    }
+  } catch (err) {
+    // 后端刚好在重启之类的 —— 下一轮再试
   }
 }
 
 refresh();
 setInterval(refresh, 4000);
 boot();
+setInterval(pollUi, 3000);
 reportHotRects();
 if (native) toNative('hello');
