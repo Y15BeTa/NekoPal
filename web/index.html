@@ -8,22 +8,28 @@
 </head>
 <body>
 
+<!-- ── 顶栏：只放「读的时候随时要碰」的东西 ─────────────────────────── -->
 <header class="bar">
   <div class="brand">NekoPal<span class="sub">猫伴</span></div>
+
   <div class="controls">
     <label class="field"><span>音色</span><select id="voice"></select></label>
-    <label class="field check"><input type="checkbox" id="avatarOn"><span>人物形象</span></label>
-      <label class="field"><span>角色</span><select id="character"></select></label>
-      <label class="field"><span>换装</span><select id="outfit"></select></label>
     <label class="field"><span>语速</span>
       <select id="rate">
-        <option value="0.75">0.75x</option>
-        <option value="1" selected>1.0x</option>
-        <option value="1.25">1.25x</option>
-        <option value="1.5">1.5x</option>
-        <option value="2">2.0x</option>
+        <option value="0.75">0.75×</option>
+        <option value="1" selected>1.0×</option>
+        <option value="1.25">1.25×</option>
+        <option value="1.5">1.5×</option>
+        <option value="2">2.0×</option>
       </select>
     </label>
+
+    <span class="divider" aria-hidden="true"></span>
+
+    <label class="field check"><input type="checkbox" id="avatarOn"><span>人物形象</span></label>
+    <label class="field"><span>角色</span><select id="character"></select></label>
+    <label class="field"><span>换装</span><select id="outfit"></select></label>
+
     <div class="transport">
       <button id="prev" title="上一句">⏮</button>
       <button id="playPause" class="primary" title="播放 / 暂停">▶</button>
@@ -32,6 +38,7 @@
   </div>
 </header>
 
+<!-- ── 输入区 ──────────────────────────────────────────────────── -->
 <section class="input-area">
   <textarea id="input" placeholder="把一整块文字粘进来（一条长回答 / 一段讲义 / 一篇文章），然后点「朗读」。"></textarea>
   <div class="input-actions">
@@ -48,21 +55,125 @@
 
 <div id="packWarn" class="pack-warn" hidden></div>
 
-<details id="chatPanel" class="activity">
-  <summary>角色聊天（可选：让角色按性格自己说一句）</summary>
-  <div id="chatBody" class="activity-list">
-    <div class="act-empty">（展开后加载）</div>
+<!-- ── 托盘：一个标签栏 + 四块面板 ────────────────────────────────── -->
+<!-- 为什么改成标签页：以前四个 `<details>` 一路堆下来，把跟读区挤得很矮，
+     而且「设置」压根没地方放。现在只有标签栏常驻，点哪个开哪个，再点收起。 -->
+<section class="tray" id="tray">
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="settings" aria-selected="false">⚙️ 设置</button>
+    <button class="tab" role="tab" data-tab="export">💾 导出</button>
+    <button class="tab" role="tab" data-tab="chat">🤖 角色聊天</button>
+    <button class="tab" role="tab" data-tab="activity">📋 活动记录</button>
+    <span class="tabs-spacer"></span>
+    <button class="tab ghost" id="trayClose" title="收起">✕</button>
+  </nav>
+
+  <div class="panes">
+
+    <!-- ① 设置 -->
+    <div class="pane" id="pane-settings" data-pane="settings" role="tabpanel">
+      <div class="grid">
+        <label class="switch" for="setAutoRead">
+          <input type="checkbox" id="setAutoRead">
+          <span class="knob" aria-hidden="true"></span>
+          <span class="sw-text">
+            <b>自动朗读 opencode 输出</b>
+            <em>关掉后，插件推来的内容只被记录、不发声；你自己点「朗读」照常播。</em>
+          </span>
+        </label>
+
+        <label class="switch" for="setFollow">
+          <input type="checkbox" id="setFollow">
+          <span class="knob" aria-hidden="true"></span>
+          <span class="sw-text">
+            <b>边写边读</b>
+            <em>回答还在生成时，写出一句就读一句，不用等它写完。</em>
+          </span>
+        </label>
+
+        <label class="field"><span>自动滚动</span>
+          <select id="setScroll">
+            <option value="center">居中跟随</option>
+            <option value="off">不滚动</option>
+          </select>
+        </label>
+
+        <label class="field"><span>预取句数</span>
+          <input type="number" id="setPrefetch" min="0" max="10" step="1">
+        </label>
+
+        <label class="field"><span>缓存上限 (MB)</span>
+          <input type="number" id="setCacheMb" min="50" max="10000" step="50">
+        </label>
+
+        <div class="field wide">
+          <span>音频缓存</span>
+          <span class="dim" id="cacheInfo">…</span>
+          <button id="cacheClear" class="ghost">清空缓存</button>
+          <button id="settingsRefresh" class="ghost">刷新</button>
+        </div>
+      </div>
+      <p class="note">
+        设置存在 <code>~/.config/nekopal/ui.json</code>，重开 App 也还在。
+      </p>
+    </div>
+
+    <!-- ② 导出 -->
+    <div class="pane" id="pane-export" data-pane="export" role="tabpanel" hidden>
+      <div class="grid">
+        <label class="field"><span>导出内容</span>
+          <select id="expWhat">
+            <option value="task">当前这次朗读（用缓存，最快）</option>
+            <option value="text">上面输入框里的文字（现场合成）</option>
+          </select>
+        </label>
+        <label class="field"><span>格式</span>
+          <select id="expFormat">
+            <option value="wav">wav</option>
+            <option value="m4a" selected>m4a</option>
+            <option value="aac">aac</option>
+            <option value="mp3">mp3（需要 ffmpeg）</option>
+          </select>
+        </label>
+        <label class="field"><span>句间停顿 (秒)</span>
+          <input type="number" id="expGap" min="0" max="3" step="0.05" value="0.15">
+        </label>
+        <label class="field"><span>文件名</span>
+          <input type="text" id="expName" placeholder="nekopal-export">
+        </label>
+        <div class="field wide">
+          <button id="expGo" class="primary">开始导出</button>
+          <span class="dim" id="expStatus"></span>
+        </div>
+      </div>
+      <p class="note">
+        导出的文件落在 <code id="expDir">~/.cache/nekopal/…</code>（可在配置里改）。
+      </p>
+    </div>
+
+    <!-- ③ 角色聊天 -->
+    <div class="pane" id="chatPanel" data-pane="chat" role="tabpanel" hidden>
+      <div id="chatBody" class="activity-list">
+        <div class="act-empty">（展开后加载）</div>
+      </div>
+      <div class="pane-actions">
+        <button id="chatOpen" class="ghost">打开配置文件夹</button>
+        <button id="chatRefresh" class="ghost">刷新</button>
+      </div>
+    </div>
+
+    <!-- ④ 活动记录 -->
+    <div class="pane" id="activityPanel" data-pane="activity" role="tabpanel" hidden>
+      <div id="activityList" class="activity-list"><div class="act-empty">（展开后加载）</div></div>
+      <div class="pane-actions">
+        <button id="activityRefresh" class="ghost">刷新</button>
+      </div>
+    </div>
+
   </div>
-  <button id="chatOpen">打开配置文件夹</button>
-  <button id="chatRefresh">刷新</button>
-</details>
+</section>
 
-<details id="activityPanel" class="activity">
-  <summary>最近推送 / 活动记录</summary>
-  <div id="activityList" class="activity-list"><div class="act-empty">（展开后加载）</div></div>
-  <button id="activityRefresh">刷新</button>
-</details>
-
+<!-- ── 跟读区 ──────────────────────────────────────────────────── -->
 <main id="reader" class="reader">
   <p class="empty">还没有内容。<br>粘贴文字后点「朗读」——<b>文字会先出现，声音随后跟上</b>。<br><span class="dim">朗读时可以点任意一句，从那里开始读。</span></p>
 </main>

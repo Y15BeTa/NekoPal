@@ -80,10 +80,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 app = create_app()
 
 def _restore_ui_voice(runtime: "Runtime") -> None:
-    """把 `ui.json` 里记着的音色，套回本次后端进程 ✗。
+    """把 `ui.json` 里记着的**音色与设置**，套回本次后端进程 ✗。
 
-    为什么需要：主窗那个下拉只是 `PUT /api/settings` ✗，
-    而那是**内存**里的值 ✗ —— 后端一重启就没了 ✗。
+    为什么需要：主窗那些控件只是 `PUT /api/settings` ✗，
+    而那是**内存**里的值 ✗ —— 后端一重启就没了 ✗
+    （"界面选着要楽奈、说出来却是晓晓 ✗"就是这么来的 ✗）。
     """
 
     try:
@@ -91,9 +92,24 @@ def _restore_ui_voice(runtime: "Runtime") -> None:
 
         from nekopal.packs import config_dir
 
-        data = _json.loads((config_dir() / "ui.json").read_text(encoding="utf-8"))
-        voice = str((data or {}).get("voice") or "").strip()
+        data = _json.loads((config_dir() / "ui.json").read_text(encoding="utf-8")) or {}
+
+        voice = str(data.get("voice") or "").strip()
         if voice:
             runtime.settings.default_voice = runtime.tts.resolve_voice_id(voice)
+
+        # 🌟 设置面板那几项 ✗（类型不对就当没写 ✗）
+        for key, cast in (
+            ("auto_read", bool),
+            ("follow", bool),
+            ("auto_scroll", str),
+            ("prefetch", int),
+            ("cache_max_mb", int),
+        ):
+            if key in data and data[key] is not None:
+                try:
+                    setattr(runtime.settings, key, cast(data[key]))
+                except (TypeError, ValueError):
+                    pass
     except Exception:  # noqa: BLE001 - 没有 / 坏了就用默认，不是错误 ✗
         pass

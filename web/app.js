@@ -18,7 +18,7 @@ const els = {
   soundGate: $('soundGate'),
   soundGateBtn: $('soundGateBtn'),
   packWarn: $('packWarn'),
-  activityPanel: $('activityPanel'),
+  tray: $('tray'),
   activityList: $('activityList'),
   activityRefresh: $('activityRefresh'),
 };
@@ -482,11 +482,45 @@ loadActivity();
 if (els.activityRefresh) {
   els.activityRefresh.addEventListener('click', loadActivity);
 }
-if (els.activityPanel) {
-  els.activityPanel.addEventListener('toggle', () => {
-    if (els.activityPanel.open) loadActivity();
+
+// ── 托盘：标签页切换 ──────────────────────────────────────────────────
+// 点标签 → 打开那一块（再点同一个 → 收起）；打开时才去拉数据，省得白跑。
+function initTray() {
+  const tray = document.getElementById('tray');
+  if (!tray) return;
+  const tabs = Array.from(tray.querySelectorAll('.tab[data-tab]'));
+  const panes = Array.from(tray.querySelectorAll('[data-pane]'));
+  const closeBtn = document.getElementById('trayClose');
+
+  function openTab(name) {
+    const already = tray.dataset.active === name;
+    if (already) {
+      tray.classList.remove('open');
+      tray.dataset.active = '';
+      tabs.forEach((t) => t.setAttribute('aria-selected', 'false'));
+      return;
+    }
+    tray.dataset.active = name;
+    tray.classList.add('open');
+    tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+    panes.forEach((p) => { p.hidden = p.dataset.pane !== name; });
+    // 打开那一刻加载（活动记录 / 聊天状态都要现拉）
+    if (name === 'activity') loadActivity();
+    if (name === 'chat') loadChatStatus();
+    if (name === 'settings') loadSettings();
+    if (name === 'export') refreshCacheInfo();
+  }
+
+  tabs.forEach((t) => t.addEventListener('click', () => openTab(t.dataset.tab)));
+  closeBtn?.addEventListener('click', () => {
+    tray.classList.remove('open');
+    tray.dataset.active = '';
+    tabs.forEach((t) => t.setAttribute('aria-selected', 'false'));
   });
 }
+
+initTray();
+
 
 // ── 人物形象：开关 + 角色下拉 + 换装下拉（两个窗口共享）────────────────
 // 和音色一样写进后端 /api/ui；角色窗口每 3 秒轮询 → 跟着换 / 自己退出。
@@ -610,14 +644,9 @@ async function loadChatStatus() {
 }
 
 function initChatPanel() {
-  const panel = document.getElementById('chatPanel');
   const openBtn = document.getElementById('chatOpen');
   const refreshBtn = document.getElementById('chatRefresh');
-  if (!panel) return;
 
-  panel.addEventListener('toggle', () => {
-    if (panel.open) loadChatStatus();
-  });
   openBtn?.addEventListener('click', async () => {
     try {
       await fetch('/api/chat/open', { method: 'POST' });
@@ -629,3 +658,152 @@ function initChatPanel() {
 }
 
 initChatPanel();
+
+// ── ⚙️ 设置面板 ───────────────────────────────────────────────────────
+// 以前这些开关**后端都有、界面一个都没有**（只能改 ~/.config/nekopal/*.json）。
+// 现在统一收在这里。改动即时 PUT /api/settings，后端会写进 ui.json 持久化。
+const SETTING_KEYS = ['auto_read', 'follow', 'auto_scroll', 'prefetch', 'cache_max_mb'];
+
+let settingsLoaded = false;
+
+async function saveSetting(patch) {
+  try {
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    return true;
+  } catch (err) {
+    setStatus('设置没保存上（后端没应答）');
+    return false;
+  }
+}
+
+async function loadSettings(force = false) {
+  const box = document.getElementById('setAutoRead');
+  if (!box) return;
+  if (settingsLoaded && !force) { refreshCacheInfo(); return; }
+
+  let s;
+  try {
+    s = await (await fetch('/api/settings')).json();
+  } catch (err) {
+    return;
+  }
+  settingsLoaded = true;
+
+  document.getElementById('setAutoRead').checked = s.auto_read !== false;
+  document.getElementById('setFollow').checked = s.follow !== false;
+  document.getElementById('setScroll').value = s.auto_scroll || 'center';
+  document.getElementById('setPrefetch').value = s.prefetch ?? 3;
+  document.getElementById('setCacheMb').value = s.cache_max_mb ?? 500;
+  const dir = document.getElementById('expDir');
+  if (dir && s.export_dir) dir.textContent = s.export_dir;
+  refreshCacheInfo();
+}
+
+async function refreshCacheInfo() {
+  const el = document.getElementById('cacheInfo');
+  if (!el) return;
+  try {
+    const d = await (await fetch('/api/cache')).json();
+    const mb = (d.bytes / 1048576).toFixed(1);
+    el.textContent = mb + ' MB / 上限 ' + d.max_mb + ' MB（' + (d.files || 0) + ' 个片段）';
+  } catch (err) {
+    el.textContent = '读不到缓存信息';
+  }
+}
+
+function initSettingsPanel() {
+  const map = {
+    setAutoRead: { key: 'auto_read', read: (el) => el.checked, ok: '自动朗读已' },
+    setFollow: { key: 'follow', read: (el) => el.checked, ok: '边写边读已' },
+    setScroll: { key: 'auto_scroll', read: (el) => el.value, ok: '自动滚动已' },
+    setPrefetch: { key: 'prefetch', read: (el) => parseInt(el.value, 10) || 0, ok: '预取句数已' },
+    setCacheMb: { key: 'cache_max_mb', read: (el) => parseInt(el.value, 10) || 500, ok: '缓存上限已' },
+  };
+
+  for (const [id, cfg] of Object.entries(map)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('change', async () => {
+      const value = cfg.read(el);
+      const ok = await saveSetting({ [cfg.key]: value });
+      if (ok) setStatus(cfg.ok + (typeof value === 'boolean' ? (value ? '打开' : '关闭') : '设为 ' + value));
+    });
+  }
+
+  document.getElementById('cacheClear')?.addEventListener('click', async () => {
+    if (!window.confirm('清空音频缓存？下次朗读会重新合成（不影响你的设置）。')) return;
+    try {
+      const d = await (await fetch('/api/cache', { method: 'DELETE' })).json();
+      setStatus('已清空缓存（' + d.files + ' 个片段）');
+      refreshCacheInfo();
+      loadActivity();
+    } catch (err) {
+      setStatus('清缓存失败');
+    }
+  });
+
+  document.getElementById('settingsRefresh')?.addEventListener('click', () => loadSettings(true));
+}
+
+initSettingsPanel();
+
+// ── 💾 导出面板 ───────────────────────────────────────────────────────
+// 后端早就有 `POST /api/export`，但界面一直没有入口 —— 只能走命令行。
+async function doExport() {
+  const status = document.getElementById('expStatus');
+  const what = document.getElementById('expWhat').value;
+  const body = {
+    format: document.getElementById('expFormat').value,
+    gap: parseFloat(document.getElementById('expGap').value) || 0.15,
+    filename: document.getElementById('expName').value.trim(),
+  };
+
+  if (what === 'task') {
+    if (!currentTaskId) {
+      if (status) status.textContent = '还没有正在朗读的任务 —— 先点一次「朗读」';
+      return;
+    }
+    body.task_id = currentTaskId;
+  } else {
+    const text = els.input.value.trim();
+    if (!text) {
+      if (status) status.textContent = '输入框是空的';
+      return;
+    }
+    body.text = text;
+  }
+
+  if (status) status.textContent = '导出中…（长文要一会儿）';
+  try {
+    const res = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await res.json();
+    if (!res.ok) {
+      if (status) status.textContent = '✗ ' + (d?.detail?.message || d?.message || res.status);
+      return;
+    }
+    const mb = (d.bytes / 1048576).toFixed(1);
+    if (status) status.textContent = '✅ ' + d.filename + '（' + d.segments + ' 段 · ' + mb + ' MB）';
+    setStatus('已导出 ' + d.filename);
+    loadActivity();
+  } catch (err) {
+    if (status) status.textContent = '✗ ' + err;
+  }
+}
+
+function initExportPanel() {
+  document.getElementById('expGo')?.addEventListener('click', doExport);
+}
+
+initExportPanel();
+
+// 启动时把设置拉一次（顺便填上导出目录、缓存用量），省得第一次展开面板是空的
+loadSettings();
+

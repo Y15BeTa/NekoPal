@@ -39,7 +39,18 @@ def _load_ui() -> dict:
 
     #: `voice` 存的是**主窗那个下拉选的音色** ✗ ——
     #: 后端重启也不该丢（默认值不是用户的意愿 ✗）
-    defaults = {"show_avatar": True, "character": None, "outfit": None, "voice": None}
+    defaults = {
+        "show_avatar": True,
+        "character": None,
+        "outfit": None,
+        "voice": None,
+        # 🌟 设置面板里的那几项也存这里 ✗ —— 不然后端一重启就打回默认 ✗
+        "auto_read": True,
+        "follow": True,
+        "auto_scroll": "center",
+        "prefetch": 3,
+        "cache_max_mb": 500,
+    }
     try:
         data = json.loads(_ui_file().read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - 没有 / 坏了都当默认值
@@ -280,7 +291,49 @@ def build_router(runtime: Runtime) -> APIRouter:
             settings.clean = [str(item) for item in data["clean"]]
         if isinstance(data.get("auto_scroll"), str):
             settings.auto_scroll = data["auto_scroll"]
+        # 🌟 这几个是「设置面板」用的 ✗（以前后端有、界面没有 ✗）
+        if isinstance(data.get("auto_read"), bool):
+            settings.auto_read = data["auto_read"]
+        if isinstance(data.get("follow"), bool):
+            settings.follow = data["follow"]
+        if isinstance(data.get("prefetch"), (int, float)):
+            settings.prefetch = max(0, min(10, int(data["prefetch"])))
+        if isinstance(data.get("cache_max_mb"), (int, float)):
+            settings.cache_max_mb = max(50, min(10000, int(data["cache_max_mb"])))
+        # ⚠️ 一起存进 ui.json ✗ —— 只改内存的话，后端一重启就回到默认值 ✗
+        #    （音色那个 bug 就是这么来的 ✗）
+        _save_ui(
+            {
+                k: getattr(settings, k)
+                for k in ("auto_read", "follow", "prefetch", "cache_max_mb", "rate", "auto_scroll")
+                if k in data
+            }
+        )
         return settings.to_dict()
+
+    @router.delete("/cache")
+    async def clear_cache() -> dict:
+        """清空音频缓存（设置面板上的「清缓存」）。"""
+
+        before = runtime.cache.stats()
+        removed = 0
+        # `evict()` 是按「上限」删，不是全清；这里要的是全清 → 直接把上限压到 0。
+        keep = runtime.cache.max_mb
+        try:
+            runtime.cache.max_mb = 0
+            removed = runtime.cache.evict()
+        finally:
+            runtime.cache.max_mb = keep
+        runtime.record("cache-cleared", files=removed, bytes=before.get("bytes"))
+        return {"cleared": True, "files": removed, "bytes": before.get("bytes", 0)}
+
+    @router.get("/cache")
+    async def cache_info() -> dict:
+        """缓存用了多少 / 上限多少（设置面板显示用）。"""
+
+        info = runtime.cache.stats()
+        info["max_mb"] = runtime.settings.cache_max_mb
+        return info
 
     # -- 朗读任务 --------------------------------------------------------
     @router.post("/read", status_code=201)
@@ -290,6 +343,24 @@ def build_router(runtime: Runtime) -> APIRouter:
             req = parse_read_request(data, runtime.settings.default_voice)
         except InvalidRequest as exc:
             raise _invalid(str(exc)) from exc
+
+        # 🌟 自动朗读开关（`auto_read` ✗）：
+        #   关掉之后，**外部推送**（opencode 插件等）只被"收到"，不自动出声 ✗。
+        #   ⚠️ 只拦外部来源 ✗ —— 你自己在界面上点「朗读」照常播 ✅
+        if not runtime.settings.auto_read and str(req.source.get("app") or "") != "web":
+            runtime.record(
+                "read-skipped",
+                source=str(req.source.get("app") or "unknown"),
+                reason="auto_read_off",
+            )
+            return {
+                "skipped": True,
+                "reason": "auto_read_off",
+                "task_id": None,
+                "sentences": 0,
+                "segments": 0,
+                "start_index": 0,
+            }
 
         # 兜底只对「默认音色」生效：用户**明确选过**的音色不该被悄悄换掉。
         # 踩过：按设计文档把变声命令写在音色包里时，rvc 曾被误判为不可用，

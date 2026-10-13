@@ -47,6 +47,15 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """从环境变量读布尔（认 1/true/yes/on ✗，大小写不敏感 ✗）。"""
+
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -61,6 +70,9 @@ class Settings:
 
     # 默认音色：只允许 official 等级（设计文档 4.7 / G10）
     # Edge-TTS 的「晓晓」体验最好；它是联网音色，因此必须有离线兜底。
+    #: 外部推送（opencode 插件等）进来时，**要不要自动开始朗读** ✗
+    #: 关掉它 = 只接收、不自动出声（你手动点「朗读」仍然正常 ✗）
+    auto_read: bool = True
     default_voice: str = "edge:zh-CN-XiaoxiaoNeural"
     # 离线 / 合成失败时自动回退到的音色（同样必须是 official 等级）
     fallback_voice: str = "say:auto"
@@ -99,6 +111,7 @@ class Settings:
         return {
             "host": self.host,
             "port": self.port,
+            "auto_read": self.auto_read,
             "default_voice": self.default_voice,
             "fallback_voice": self.fallback_voice,
             "default_backend": self.default_backend,
@@ -122,6 +135,7 @@ def load_settings() -> Settings:
     s = Settings()
     s.host = _env("NEKOPAL_HOST", s.host)
     s.port = _env_int("NEKOPAL_PORT", s.port)
+    s.auto_read = _env_bool("NEKOPAL_AUTO_READ", s.auto_read)
     s.default_voice = _env("NEKOPAL_DEFAULT_VOICE", s.default_voice)
     s.fallback_voice = _env("NEKOPAL_FALLBACK_VOICE", s.fallback_voice)
     s.default_backend = _env("NEKOPAL_DEFAULT_BACKEND", s.default_backend)
