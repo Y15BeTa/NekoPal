@@ -20,6 +20,74 @@ let petHandle = null; // mountModel 的返回值
 let avatarInfo = null; // /api/avatar 的结果
 let currentOutfit = null; // 当前形象目录名
 let lastUiOutfit = null; // 上次从 ui.json 读到的形象（用来判断"是不是别人改的" ✗）
+let voiceLines = []; // 角色的台词（开窗时从后端取一次 ✗）
+
+/** 取台词（角色包可以在 character.yaml 里覆盖 ✗） */
+async function loadVoiceLines() {
+  try {
+    const d = await (await fetch('/api/avatar/lines')).json();
+    voiceLines = d.lines || [];
+    log('台词：' + voiceLines.length + ' 句（' + voiceLines.join(' / ') + '）');
+    prewarmLines();
+  } catch (err) {
+    voiceLines = [];
+  }
+}
+
+/**
+ * 后台把台词**先合成一遍** ✗。
+ *
+ * 为什么：RVC 变声一句约 1.7 秒 ✗，第一次点会干等 ✗。
+ * 这里在开窗后**顺序**跑一遍（不并发 ✗ —— 变声服务吃 CPU ✗），
+ * 之后每次点击都是**缓存秒回** ✅
+ */
+async function prewarmLines() {
+  for (const text of voiceLines) {
+    try {
+      const res = await fetch('/api/avatar/say', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const d = await res.json();
+      if (d.cached !== undefined) {
+        // 只报一句"预热完成"，别刷屏 ✗
+      }
+    } catch (err) {
+      return; // 预热失败无所谓 —— 点的时候再合成 ✗
+    }
+  }
+  log('台词预热完成 ✅（以后点击秒回 ✗）');
+}
+
+/**
+ * 随机说一句 ✗。
+ *
+ * 走的是 `/api/avatar/say` ✗ —— 那是**只合成、不推送**的接口 ✗，
+ * 所以**不会打扰跟读窗**、也不会打断你正在听的内容 ✅
+ * （而且进同一个缓存 ✗，同一句第二次秒回 ✅）
+ */
+async function speakRandom() {
+  if (!voiceLines.length) return;
+  const text = voiceLines[Math.floor(Math.random() * voiceLines.length)];
+  try {
+    const res = await fetch('/api/avatar/say', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (!data.url) {
+      return log('说话失败 ✗ ' + JSON.stringify(data).slice(0, 90));
+    }
+    const audio = new Audio(data.url);
+    await audio.play();
+    log('点击：说了「' + data.text + '」（音色 ' + data.voice + '）✅');
+  } catch (err) {
+    // ⚠️ 自动播放策略：可能因为"没有用户手势"被拦 ✗ —— 如实记下来 ✗
+    log('说话播放失败 ✗ ' + err);
+  }
+}
 
 /** 写回主窗/角色窗共享的偏好 ✗ */
 async function saveUi(patch) {
@@ -196,6 +264,9 @@ character.addEventListener('click', () => {
           ? '切失败 ✗'
           : '这个形象没带表情 ✗（换 ADV 版 ✗）'),
   );
+
+  // 顺带**随机说一句** ✗（用她自己的音色 ✗）
+  speakRandom();
 });
 
 // ── 右键菜单 ────────────────────────────────────────────────────────────
@@ -599,6 +670,7 @@ async function pollUi() {
 refresh();
 setInterval(refresh, 4000);
 boot();
+loadVoiceLines();
 setInterval(pollUi, 3000);
 reportHotRects();
 if (native) toNative('hello');

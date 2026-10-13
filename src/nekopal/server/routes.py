@@ -9,7 +9,7 @@ import mimetypes
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -687,6 +687,85 @@ def build_router(runtime: Runtime) -> APIRouter:
             "active_character": _load_ui().get("character"),
             "active_outfit": _load_ui().get("outfit"),
             "show_avatar": bool(_load_ui().get("show_avatar", True)),
+        }
+
+    # -- 角色语音（点一下角色时说一句 ✗）-----------------------------------
+    #: 默认台词。角色包可以在 character.yaml 里用 `voice_lines:` 覆盖 ✗。
+    #: 短句很重要 ✗：RVC 变声一句约 1.7 秒，太长会等 ✗（同句第二次走缓存 ✗）
+    _DEFAULT_LINES = ["嗯？", "在的哦～", "怎么啦？", "喵～", "我在听呢", "嗯嗯～"]
+
+    def _voice_lines(character_id: Optional[str]) -> list:
+        """取某个角色的台词（角色包的 `voice_lines:` 优先 ✗）。"""
+
+        if character_id:
+            try:
+                import yaml  # 延迟导入：只有用到这里才需要 ✗
+
+                path = config_dir() / "characters" / character_id / "character.yaml"
+                data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                lines = data.get("voice_lines")
+                if isinstance(lines, list) and lines:
+                    return [str(x) for x in lines if str(x).strip()]
+            except Exception:  # noqa: BLE001 - 没有 / 坏了就用默认 ✗
+                pass
+        return list(_DEFAULT_LINES)
+
+    @router.get("/avatar/lines")
+    async def avatar_lines(character: str = "") -> dict:
+        """这个角色有哪些台词（角色窗口开窗时取一次 ✗）。"""
+
+        cid = character or _load_ui().get("character") or None
+        return {"lines": _voice_lines(cid)}
+
+    @router.post("/avatar/say")
+    async def avatar_say(request: Request) -> dict:
+        """合成**一句话**给角色窗口播放 ✗。
+
+        和 `/api/read` 的关键区别：**不建任务、不推送** ✗ ——
+        所以不会打扰跟读窗、也不会打断你正在听的内容 ✅
+        （进的是**同一个缓存** ✗，同一句第二次秒回 ✅）
+        """
+
+        try:
+            payload = await request.json()
+            text = str((payload or {}).get("text") or "").strip()
+        except Exception:  # noqa: BLE001
+            raise _invalid("要传 {\"text\": \"...\"}") from None
+        if not text:
+            raise _invalid("text 不能为空")
+        text = text[:200]
+
+        options = SynthOptions.from_dict({})
+        sentences = prepare_sentences(text, {}, runtime.settings.clean)
+        if not sentences:
+            raise _invalid("清洗后没有可读的内容")
+
+        # 用的就是「默认音色」✗ —— 也就是主窗选的那个（可能是要楽奈 RVC ✗）
+        voice = runtime.tts.resolve_voice_id(
+            runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
+        )
+        try:
+            segment, cached = await synthesize_sentence(
+                sentences[0],
+                voice,
+                options,
+                runtime.tts,
+                runtime.cache,
+                runtime.settings.fallback_voice,
+            )
+        except Exception as exc:  # noqa: BLE001 - 合成失败不该让点击炸掉 ✗
+            runtime.record("avatar-say-failed", text=sentences[0], error=str(exc)[:120])
+            raise HTTPException(
+                502, {"code": "SAY_FAILED", "message": "合成失败：{}".format(exc)}
+            ) from exc
+
+        runtime.record("avatar-say", text=sentences[0], cached=bool(cached))
+        return {
+            "text": sentences[0],
+            "voice": voice,
+            "cached": bool(cached),
+            # ⚠️ 字段是 `audio_id` 不是 `id` ✗（踩过 ✗）
+            "url": "/api/audio/{}".format(segment.audio_id),
         }
 
     @router.get("/avatar-l2d/{file_path:path}")
