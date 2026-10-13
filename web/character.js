@@ -170,15 +170,32 @@ if (native) {
   });
 }
 
-// 点一下角色 → 换一个动作（**不眨眼**、**不缩放** ✗）
+// 点一下角色 → **随机动作 + 随机表情** ✗
+// ⚠️ 不眨眼 ✗（眨眼是自动的，用户明确说过"不要点一下就眨"✗）
+// ⚠️ 不缩放 ✗（用户明确说过不要"点一下整个人缩一下"✗）
 character.addEventListener('click', () => {
   if (dragged) {
-    dragged = false;
+    dragged = false; // 拖完松手不算点击 ✗
     return;
   }
-  if (petHandle && petHandle.playReaction && petHandle.playReaction()) {
-    log('点击：换了一个动作 ✅');
-  }
+  if (!petHandle) return;
+
+  const played = petHandle.playReaction ? petHandle.playReaction() : false;
+
+  const list = petHandle.listExpressions ? petHandle.listExpressions() : [];
+  const name = list.length ? list[Math.floor(Math.random() * list.length)] : null;
+  const changed =
+    name && petHandle.setExpression ? petHandle.setExpression(name) : false;
+
+  log(
+    '点击反馈：动作=' + (played ? '随机换了一个 ✅' : '无 ✗') +
+      ' · 表情=' +
+      (changed
+        ? name + ' ✅'
+        : list.length
+          ? '切失败 ✗'
+          : '这个形象没带表情 ✗（换 ADV 版 ✗）'),
+  );
 });
 
 // ── 右键菜单 ────────────────────────────────────────────────────────────
