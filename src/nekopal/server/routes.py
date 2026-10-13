@@ -52,6 +52,9 @@ def _load_ui() -> dict:
         "cache_max_mb": 500,
         # 🌟 点击角色时，台词从哪来 ✗：`pool` 抽预生成的（快 ✅）/ `live` 每次现编（慢 ✗）
         "line_source": "pool",
+        # 🌟 角色窗的「感觉型」开关 ✗ —— 都在主窗「设置」里，不该让人去编辑 json ✗
+        "paw_cursor": True,   # 🐾 鼠标移到角色上变成小猫爪
+        "gaze_follow": True,  # 眼睛和头看向光标
     }
     try:
         data = json.loads(_ui_file().read_text(encoding="utf-8"))
@@ -825,11 +828,32 @@ def build_router(runtime: Runtime) -> APIRouter:
         return list(_DEFAULT_LINES)
 
     @router.get("/avatar/lines")
-    async def avatar_lines(character: str = "") -> dict:
-        """这个角色有哪些台词（角色窗口开窗时取一次 ✗）。"""
+    async def avatar_lines(character: str = "", limit: int = 0) -> dict:
+        """这个角色有哪些台词（角色窗口开窗时取一次 ✗）。
+
+        ⚠️ **优先给「预生成台词池」** ✗ —— 角色窗开窗后会把这些**逐个预热合成** ✗。
+        早期版本这里只给静态那 6 句 ✗，于是**预热的全是没用的** ✗，
+        真正会点到的池子句子反而没缓存 ✗（每点一次都干等变声 ✗）。
+
+        `limit>0` 时只取前 N 句 ✗ —— 预热是**顺序跑**的 ✗，
+        RVC 一句约 1.7 秒 ✗，30 句就是 50 秒 CPU ✗，不值得全热 ✗。
+        """
+
+        from nekopal import chat as chat_mod
 
         cid = character or _load_ui().get("character") or None
-        return {"lines": _voice_lines(cid)}
+        static = _voice_lines(cid)
+        try:
+            pool = chat_mod.load_lines(cid)["lines"]
+        except Exception:  # noqa: BLE001 - 池子读不到不是错误 ✗
+            pool = []
+
+        if pool:
+            lines = pool[:limit] if limit and limit > 0 else pool
+            return {"lines": lines, "source": "pool", "total": len(pool)}
+
+        lines = static[:limit] if limit and limit > 0 else static
+        return {"lines": lines, "source": "static", "total": len(static)}
 
     # -- 预生成台词池 ------------------------------------------------------
     # 为什么有这套 ✗：`/api/avatar/chat` 每次点击都打一次 LLM ✗，要等好几秒 ✗。
@@ -867,9 +891,11 @@ def build_router(runtime: Runtime) -> APIRouter:
         cid = (str(payload.get("character") or "").strip()
                or _load_ui().get("character") or None)
         count = payload.get("count") or chat_mod.DEFAULT_BATCH
+        # 用户写的一句话需求 ✗（"这次想要多一点跟找工作有关的" ✗）
+        want = str(payload.get("want") or "").strip()[:500]
 
         try:
-            data = await asyncio.to_thread(chat_mod.generate_lines, cid, count)
+            data = await asyncio.to_thread(chat_mod.generate_lines, cid, count, want)
         except Exception as exc:  # noqa: BLE001 - 失败要让界面上看得见 ✗
             runtime.record("lines-generate-failed", error=str(exc)[:160])
             raise HTTPException(
@@ -878,6 +904,42 @@ def build_router(runtime: Runtime) -> APIRouter:
 
         runtime.record("lines-generated", count=data["count"], model=data["model"])
         return data
+
+    @router.post("/lines/open")
+    async def lines_open() -> dict:
+        """在编辑器 / 文件管理器里打开那个**统一的台词池文件** ✗。
+
+        ⚠️ `lines.yaml` 在 `~/.config/nekopal/` 下 ✗ —— 普通人根本找不到 ✗，
+        所以界面上给一个「一键打开」+ 快捷键 ✅。
+        """
+
+        import subprocess as _sp
+        import sys as _sys
+
+        from nekopal import chat as chat_mod
+
+        path = chat_mod.lines_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.is_file():
+                # 先落一个带注释的空模板 ✗，不然打开的是空气 ✗
+                chat_mod.save_lines(None, [], "")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # macOS：用默认编辑器打开文件本身（不是文件夹 ✗）
+        try:
+            if _sys.platform == "darwin":
+                _sp.Popen(["open", "-t", str(path)])
+            else:
+                _sp.Popen(["xdg-open", str(path)])
+        except Exception:  # noqa: BLE001 - 打不开就退回"打开所在文件夹" ✗
+            opener = "open" if _sys.platform == "darwin" else "xdg-open"
+            try:
+                _sp.Popen([opener, str(path.parent)])
+            except Exception as exc:  # noqa: BLE001
+                raise _invalid("打不开文件：{}".format(exc)) from None
+        return {"opened": str(path)}
 
     @router.put("/lines")
     async def lines_put(request: Request) -> dict:
@@ -1056,7 +1118,12 @@ def build_router(runtime: Runtime) -> APIRouter:
             payload = await request.json()
         except Exception:  # noqa: BLE001
             payload = {}
-        character = str((payload or {}).get("character") or "").strip() or None
+        # ⚠️ 角色窗在 `avatarInfo` 还没加载完时会发 `character: ""` ✗ ——
+        #    那时如果不回退到 `ui.json` 里选的角色 ✗，就会去查
+        #    `characters/default/lines.json`（**空池子** ✗）→ 池子整条路失效 ✗、
+        #    悄悄退回"现编"或静态那 6 句 ✗（2026-10-14 真实踩到 ✗）。
+        character = (str((payload or {}).get("character") or "").strip()
+                     or _load_ui().get("character") or None)
 
         enabled = chat_mod.is_enabled()
         pool = chat_mod.load_lines(character)["lines"] if enabled else []

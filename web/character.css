@@ -177,6 +177,23 @@ body:not(.native) .actions:hover {
   background: rgba(150, 150, 160, 0.55);
 }
 
+/* ── 🐾 猫爪光标（可在主窗「设置」里关 ✗）─────────────────────────────
+ * 用一张 32×32 的猫爪 PNG（我自己画的 ✗ 无版权问题 ✅，在 web/paw.png ✗）。
+ * 热点放在**爪子上方中间**（16,6 ✗）—— 这样"点在哪"依然精确 ✗，
+ * 爪子只是悬在指针下方的装饰 ✗。
+ * ⚠️ 一定带 `grab` / `pointer` 兜底 ✗：
+ *    自定义光标若加载失败，兜底不会让指针**变成没有** ✗（那才是真麻烦 ✗）。
+ */
+body.paw-cursor .character,
+body.paw-cursor .character:active {
+  cursor: url("/paw.png") 16 6, grab;
+}
+
+body.paw-cursor .actions button,
+body.paw-cursor .menu button {
+  cursor: url("/paw.png") 16 6, pointer;
+}
+
 /* ── 右键菜单 ────────────────────────────────────────────────────
  * 用 HTML 自己画：原生 NSPanel 没有可用的 context menu ✗。
  * ⚠️ 菜单必须**报进「可点区域」** ✗ —— 否则精确命中会把它判成透明区、

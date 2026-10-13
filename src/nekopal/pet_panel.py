@@ -165,6 +165,8 @@ def run(
     corner: str = "bottom-right",
     click_through: bool = True,
     state_path: Optional[str] = None,
+    cursor_image: Optional[str] = None,
+    ui_path: Optional[str] = None,
 ) -> int:
     """起一个 ``NSPanel`` 装着的置顶窗口，阻塞到它被关掉。
 
@@ -176,6 +178,9 @@ def run(
         「我身上」的矩形接收鼠标事件，其余透明区域**点穿**到桌面 ——
         否会一个大透明窗口会挡住你点别的东西 ✗。角色窗口该开，小条不用。
     :param state_path: 记住窗口位置的文件；下次启动回到你拖到的地方
+    :param cursor_image: 🐾 猫爪光标的 PNG（64×64，按 32 点显示）。
+        见下面 ``_apply_paw_cursor`` 的说明 —— **CSS 的 ``cursor:`` 在这个窗口上不生效**。
+    :param ui_path: ``ui.json``（读 ``paw_cursor`` 开关；主窗「设置」里能关）
     """
 
     import objc
@@ -471,6 +476,74 @@ def run(
             )
         )
 
+    # 光标位置 → 网页（给「视线跟随 / 猫爪光标」用）
+    # 为什么也要原生推：透明区域是"点穿"的，网页在**那些地方收不到 mousemove** ——
+    # 而"看向光标"恰恰最需要知道光标在窗口边缘 / 外面时的位置。
+    # 反正这个 tick 本来每 80ms 就在读光标（命中判定要用），顺手推一下不额外花钱。
+    last_cursor = [None]
+
+    def _tell_page_cursor(x, y):
+        prev = last_cursor[0]
+        # 没怎么动就别刷（省一次跨语言调用）
+        if prev is not None and abs(prev[0] - x) < 4 and abs(prev[1] - y) < 4:
+            return
+        last_cursor[0] = (x, y)
+        _call_js(
+            "window.__nekopalCursor && window.__nekopalCursor({:.0f}, {:.0f})".format(x, y)
+        )
+
+    # 🐾 猫爪光标
+    # 为什么**不用 CSS** `cursor:`（网页里明明是对的）——
+    # 实测在 NSPanel 上**完全不生效**：连 `grab` 手型都不显示，
+    # 因为这是个**非激活**的 accessory app 面板，网页设的光标到不了系统。
+    # 只能由原生 `NSCursor.set()` 来设。反正这个 tick 每 80ms 就在判
+    # 「鼠标在不在身上」，顺手切光标不额外花钱。
+    paw = {"cursor": None, "ok": None, "wanted": None, "checked": -9.0}
+
+    def _paw_wanted() -> bool:
+        """要不要猫爪（每 ~2 秒读一次 ui.json，别每帧读文件）。"""
+        import json as _json
+        import time as _time
+
+        now = _time.monotonic()
+        if paw["wanted"] is not None and now - paw["checked"] < 2.0:
+            return paw["wanted"]
+        paw["checked"] = now
+        try:
+            data = _json.loads(Path(ui_path).read_text(encoding="utf-8")) if ui_path else {}
+            paw["wanted"] = data.get("paw_cursor") is not False
+        except Exception:  # noqa: BLE001 - 读不到就当"要"（默认开）
+            paw["wanted"] = True
+        return paw["wanted"]
+
+    def _apply_paw_cursor(inside: bool) -> None:
+        try:
+            from AppKit import NSCursor, NSImage, NSMakeSize
+
+            if paw["cursor"] is None and cursor_image and Path(cursor_image).is_file():
+                img = NSImage.alloc().initWithContentsOfFile_(str(cursor_image))
+                if img is not None:
+                    # 图是 64px，按 **32 点**显示 —— 高分屏才锐利
+                    img.setSize_(NSMakeSize(32.0, 32.0))
+                    # 热点 (16,26)：图的上方中间（AppKit 原点在**左下**，32-6=26）
+                    paw["cursor"] = NSCursor.alloc().initWithImage_hotSpot_(
+                        img, NSMakePoint(16.0, 26.0)
+                    )
+                    print("置顶小条：猫爪光标已加载 ✅", flush=True)
+
+            want = inside and _paw_wanted() and paw["cursor"] is not None
+            if want:
+                # 每次 tick 都重申一遍 —— 别的程序会顺手把光标抢走
+                paw["cursor"].set()
+            elif paw["ok"]:
+                # 只在"离开"那一次还原成箭头（离开就点穿了，不该再管桌面光标）
+                NSCursor.arrowCursor().set()
+            paw["ok"] = want
+        except Exception as exc:  # noqa: BLE001 - 光标失败绝不能让窗口炸掉
+            if paw["ok"] is None:
+                paw["ok"] = False
+                print("置顶小条：猫爪光标不可用（{}）—— 用系统箭头".format(exc), flush=True)
+
     def _tick(_timer):
         # ⚠️ 计时器里**绝对不能漏异常**：pyobjc 会把 ObjC 回调里的 Python 异常
         #    直接变成进程 abort（连 traceback 都不一定打得出来 ✗）。
@@ -504,6 +577,8 @@ def run(
                             screen_h,
                         )
                         inside = is_over_any(rects, (rel_x, rel_y))
+                        # 顺手把光标位置推给网页 → 视线跟随（见 _tell_page_cursor）
+                        _tell_page_cursor(rel_x, rel_y)
                         if debug_once[0]:
                             debug_once[0] = False
                             print(
@@ -523,6 +598,8 @@ def run(
                         inside = None
 
                 if inside is not None:
+                    # 🐾 猫爪光标（放在最前面：切光标要**立刻**生效）
+                    _apply_paw_cursor(inside)
                     if inside:
                         bridge._ever_inside = True
                     # 🛡️ 保险：在"见过鼠标进身上"之前**绝不开启穿透**。

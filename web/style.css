@@ -92,6 +92,7 @@ input::placeholder { color: var(--faint); }
 .divider { width: 1px; height: 20px; background: var(--line); }
 .dim { color: var(--dim); }
 .note { margin: var(--sp-3) 0 0; font-size: 11px; color: var(--faint); line-height: 1.6; }
+.note.bad { color: #ffb08a; }
 .note code, code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
@@ -222,6 +223,8 @@ body.unlocked .sound-gate { display: none; }
 .pane { padding: var(--sp-3) var(--sp-4) var(--sp-4); }
 .pane[hidden] { display: none; }
 
+.grid.gap-top { margin-top: var(--sp-3); }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -286,6 +289,18 @@ body.unlocked .sound-gate { display: none; }
   font-size: 13px;
 }
 .lines-head b { color: var(--text); }
+.lines-want { margin-top: var(--sp-2); }
+.lines-want input[type="text"] { flex: 1; min-width: 200px; }
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  padding: 1px 4px;
+  margin-left: 4px;
+  border: 1px solid var(--line-hi);
+  border-radius: 4px;
+  background: #1a1e25;
+  color: var(--dim);
+}
 .lines-actions {
   display: flex;
   align-items: center;

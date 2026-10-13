@@ -22,12 +22,15 @@ let currentOutfit = null; // 当前形象目录名
 let lastUiOutfit = null; // 上次从 ui.json 读到的形象（用来判断"是不是别人改的" ✗）
 let voiceLines = []; // 角色的台词（开窗时从后端取一次 ✗）
 
-/** 取台词（角色包可以在 character.yaml 里覆盖 ✗） */
+/** 取台词（**优先预生成池** ✗，角色包可以在 character.yaml 里覆盖 ✗） */
 async function loadVoiceLines() {
   try {
-    const d = await (await fetch('/api/avatar/lines')).json();
+    // ⚠️ `limit=8` ✗ —— 这里取来的台词会被**逐个预热合成** ✗，
+    //    而 RVC 一句约 1.7 秒 ✗，池子有 30 句就是 50 秒 CPU ✗。热前 8 句足够了 ✅
+    const d = await (await fetch('/api/avatar/lines?limit=8', { cache: 'no-store' })).json();
     voiceLines = d.lines || [];
-    log('台词：' + voiceLines.length + ' 句（' + voiceLines.join(' / ') + '）');
+    log('台词 ' + voiceLines.length + ' 句（来源 ' + (d.source || '?') +
+        (d.total ? ' · 共 ' + d.total + ' ✗' : '') + '）：' + voiceLines.join(' / '));
     prewarmLines();
   } catch (err) {
     voiceLines = [];
@@ -70,7 +73,7 @@ async function prewarmLines() {
 async function speakRandom() {
   try {
     // ⚠️ 走 `/api/avatar/chat` ✗ —— **由后端决定**：
-    //    配了 LLM → 按角色性格 + 私人信息**现生成一句** ✅
+    //    配了 LLM → 从**预生成台词池**抽一句 / 或现编 ✅
     //    没配 / 失败 → 退回角色包的静态台词 ✅
     //    所以前端只有这一条路 ✗，不用判断 ✗（也不会因为没配就哑掉 ✗）
     const res = await fetch('/api/avatar/chat', {
@@ -82,9 +85,14 @@ async function speakRandom() {
     if (!data.url) {
       return log('说话失败 ✗ ' + JSON.stringify(data).slice(0, 90));
     }
-    const audio = new Audio(data.url);
-    await audio.play();
-    log('点击：说了「' + data.text + '」（音色 ' + data.voice + '）✅');
+    // ⚠️ 复用同一个 <audio> 元素 ✗ —— 口型分析（createMediaElementSource ✗）
+    //    对每个元素只能接一次 ✗，每次 new Audio 就没法量了 ✗。
+    const el = ensureVoiceEl();
+    el.src = data.url;
+    el.currentTime = 0;
+    if (lipCtx && lipCtx.state === 'suspended') lipCtx.resume().catch(() => {});
+    await el.play();
+    log('点击：说了「' + data.text + '」（' + data.source + ' · ' + data.voice + '）✅');
   } catch (err) {
     // ⚠️ 自动播放策略：可能因为"没有用户手势"被拦 ✗ —— 如实记下来 ✗
     log('说话播放失败 ✗ ' + err);
@@ -653,7 +661,7 @@ async function boot() {
  */
 async function pollUi() {
   try {
-    const ui = await (await fetch('/api/ui')).json();
+    const ui = await (await fetch('/api/ui', { cache: 'no-store' })).json();
     if (ui.show_avatar === false) {
       log('主窗要求关掉人物 → 退出角色窗口');
       if (native) toNative('quit');
@@ -664,10 +672,46 @@ async function pollUi() {
       const o = (activeCharacter()?.outfits || []).find((x) => x.folder === ui.outfit);
       if (o) await switchOutfit(o);
     }
+    applyLookFlags(ui);
   } catch (err) {
     // 后端刚好在重启之类的 —— 下一轮再试
   }
 }
+
+// ── 外观开关（都在主窗「设置」里，改完这个窗口 3 秒内跟着变）───────────
+// 为什么放到界面上：这类"感觉型"的开关，用户不该去编辑 json。
+let pawOn = null;
+let gazeOn = true;
+
+function applyLookFlags(ui) {
+  // 🐾 猫爪光标
+  const paw = ui.paw_cursor !== false;
+  if (paw !== pawOn) {
+    pawOn = paw;
+    document.body.classList.toggle('paw-cursor', paw);
+    log('猫爪光标 ' + (paw ? '开 ✅' : '关 ✗'));
+  }
+  // 视线跟随
+  const gaze = ui.gaze_follow !== false;
+  if (gaze !== gazeOn) {
+    gazeOn = gaze;
+    log('视线跟随 ' + (gaze ? '开 ✅' : '关 ✗'));
+  }
+}
+
+// ── 视线跟随：眼睛和头**看向光标** ────────────────────────────────────
+// ⚠️ 光标位置由**原生面板**推过来 ✗（见 pet_panel.py 的 _tell_page_cursor ✗）——
+//    因为透明区域是"点穿"的 ✗，网页在那些地方**收不到 mousemove** ✗。
+//    网页自己也听一层 `mousemove` 做兜底 ✅（原生挂了也还能动 ✗）。
+let cursorPt = null;   // 窗口内坐标（px ✗）
+let gazeLogged = false;
+
+window.__nekopalCursor = (x, y) => {
+  cursorPt = [Number(x) || 0, Number(y) || 0];
+};
+window.addEventListener('mousemove', (e) => {
+  cursorPt = [e.clientX, e.clientY];
+});
 
 refresh();
 setInterval(refresh, 4000);
@@ -677,24 +721,112 @@ setInterval(pollUi, 3000);
 reportHotRects();
 if (native) toNative('hello');
 
-// ── 口型同步：跟后端要电平（约 70ms 一次）──────────────────────────────
-// 音频在主跟读窗里 ✗，它算好电平 POST 给后端 ✗，这里轮询着张嘴 ✗。
-// ⚠️ 用**递归 setTimeout** 而不是 setInterval —— fetch 慢的时候不会堆起来 ✗。
-let lipSeen = -1;
-async function lipLoop() {
+// ── 口型同步 ─────────────────────────────────────────────────────────
+// ⚠️ 2026-10-14 修 ✗：以前这里**只**轮询 `/api/lip` ✗，而**没有任何代码在 POST 它** ✗
+//    （主窗那段实现丢了 ✗）→ 电平恒为 0 ✗ → 口型**从来就没动过** ✗。
+//
+// 现在分两路 ✗：
+//   ① **本地**：点击反馈的音频是在**这个窗口**里播的 ✗
+//      → 直接分析它自己 ✅（零延迟、也不依赖后端 ✗）
+//   ② **远端**：跟读窗 / opencode 的音频在主窗里 ✗
+//      → 那边算好电平 POST `/api/lip` ✗，这里轮询着取 ✅
+let voiceEl = null;      // 复用一个 <audio>：口型分析只能对同一个元素接一次 ✗
+let lipCtx = null;
+let lipAnalyser = null;
+let lipData = null;
+let remoteLevel = 0;     // 主窗上报的电平 ✗
+let lipLocalSeen = false;
+let lipRemoteSeen = false;
+
+/** 建（或复用）那个唯一的 <audio>，并把口型分析接上去 ✗。 */
+function ensureVoiceEl() {
+  if (voiceEl) return voiceEl;
+  voiceEl = document.createElement('audio');
+  voiceEl.preload = 'auto';
+  voiceEl.style.display = 'none';
+  document.body.appendChild(voiceEl);
+  return voiceEl;
+}
+
+function ensureLipAnalyser() {
+  if (lipAnalyser) return true;
   try {
-    if (petHandle?.setMouth) {
-      const d = await (await fetch('/api/lip')).json();
-      petHandle.setMouth(d.level || 0);
-      // 偶尔记一笔，方便确认真的在动 ✗
-      if (lipSeen < 0 && (d.level || 0) > 0.05) {
-        lipSeen = d.level;
-        log('口型：收到电平 ' + d.level.toFixed(3) + ' ✅');
-      }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return false;
+    lipCtx = new Ctx();
+    const src = lipCtx.createMediaElementSource(ensureVoiceEl());
+    lipAnalyser = lipCtx.createAnalyser();
+    lipAnalyser.fftSize = 512;
+    lipAnalyser.smoothingTimeConstant = 0.5;
+    src.connect(lipAnalyser);
+    lipAnalyser.connect(lipCtx.destination); // ⚠️ 不接就没声音 ✗
+    lipData = new Uint8Array(lipAnalyser.fftSize);
+    if (lipCtx.state === 'suspended') lipCtx.resume().catch(() => {});
+    return true;
+  } catch (err) {
+    log('口型：本地分析不可用（' + err + '）—— 退回远端电平 ✗');
+    lipAnalyser = null;
+    return false;
+  }
+}
+
+/** 本地音量的 RMS（0..1 ✗）。 */
+function localLevel() {
+  if (!lipAnalyser || !voiceEl || voiceEl.paused) return 0;
+  try {
+    lipAnalyser.getByteTimeDomainData(lipData);
+    let sum = 0;
+    for (let i = 0; i < lipData.length; i++) {
+      const v = (lipData[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.min(1, Math.sqrt(sum / lipData.length) * 3.4);
+  } catch (err) {
+    return 0;
+  }
+}
+
+// 远端电平：低频轮询（本地有声音时就不问了 ✗，省得白跑 ✗）
+async function pollRemoteLip() {
+  try {
+    const d = await (await fetch('/api/lip', { cache: 'no-store' })).json();
+    remoteLevel = d.level || 0;
+    if (!lipRemoteSeen && remoteLevel > 0.05) {
+      lipRemoteSeen = true;
+      log('口型：收到主窗电平 ' + remoteLevel.toFixed(3) + ' ✅');
     }
   } catch (err) {
-    // 后端在重启之类的 —— 下一轮再试
+    remoteLevel = 0;
   }
-  setTimeout(lipLoop, 70);
+  setTimeout(pollRemoteLip, 110);
 }
-lipLoop();
+
+// 开口幅度：本地优先（更跟得上 ✗），没在放就走远端 ✅
+function mouthLoop() {
+  const local = localLevel();
+  if (!lipLocalSeen && local > 0.05) {
+    lipLocalSeen = true;
+    log('口型：本地电平 ' + local.toFixed(3) + ' ✅（点击反馈走这条 ✗）');
+  }
+  const level = local > 0.02 ? local : remoteLevel;
+  if (petHandle?.setMouth) petHandle.setMouth(level);
+
+  // 视线：归一化到 -1..1（+x 右、+y 下 ✗），再给一点增益让偏移看得出 ✗
+  if (gazeOn && cursorPt && petHandle?.setGaze) {
+    const w = Math.max(1, window.innerWidth);
+    const h = Math.max(1, window.innerHeight);
+    petHandle.setGaze(
+      ((cursorPt[0] / w) * 2 - 1) * 1.3,
+      ((cursorPt[1] / h) * 2 - 1) * 1.3
+    );
+    if (!gazeLogged) {
+      gazeLogged = true;
+      log('视线跟随：收到光标 ✅');
+    }
+  }
+  requestAnimationFrame(mouthLoop);
+}
+
+ensureLipAnalyser();
+pollRemoteLip();
+requestAnimationFrame(mouthLoop);

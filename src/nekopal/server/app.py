@@ -106,6 +106,9 @@ def _restore_ui_voice(runtime: "Runtime") -> None:
             ("prefetch", int),
             ("cache_max_mb", int),
             ("line_source", str),
+            # 注意：`paw_cursor` / `gaze_follow` **不在这里** ✗ ——
+            # 它们只存在 `ui.json` 里、不是 `Settings` 字段 ✗，
+            # 而且 `/api/ui` 每次都现读文件 ✅（角色窗 3 秒轮询一次就拿到了 ✗）。
         ):
             if key in data and data[key] is not None:
                 try:

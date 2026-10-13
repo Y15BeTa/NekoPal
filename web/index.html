@@ -106,12 +106,32 @@
           <input type="number" id="setCacheMb" min="50" max="10000" step="50">
         </label>
 
-        <div class="field wide">
+        <label class="field wide">
           <span>音频缓存</span>
           <span class="dim" id="cacheInfo">…</span>
           <button id="cacheClear" class="ghost">清空缓存</button>
           <button id="settingsRefresh" class="ghost">刷新</button>
-        </div>
+        </label>
+      </div>
+
+      <div class="grid gap-top">
+        <label class="switch" for="setPawCursor">
+          <input type="checkbox" id="setPawCursor">
+          <span class="knob" aria-hidden="true"></span>
+          <span class="sw-text">
+            <b>🐾 猫爪光标</b>
+            <em>鼠标移到角色身上时，指针变成一只小猫爪。</em>
+          </span>
+        </label>
+
+        <label class="switch" for="setGaze">
+          <input type="checkbox" id="setGaze">
+          <span class="knob" aria-hidden="true"></span>
+          <span class="sw-text">
+            <b>👀 视线跟随</b>
+            <em>她的眼睛和头会轻轻看向你的光标（动作照常，只是"瞟一眼"）。</em>
+          </span>
+        </label>
       </div>
       <p class="note">
         设置存在 <code>~/.config/nekopal/ui.json</code>，重开 App 也还在。
@@ -162,6 +182,14 @@
           一次让模型写几十句<b>存着</b>，点角色时<b>直接从里面抽</b> —— 瞬间出声，不用等它想。
           生成完这里会列出来，<b>可以直接改文字、也可以删掉不喜欢的句子</b>（比如叹气太多的）。
         </p>
+        <div class="lines-want">
+          <label class="field wide">
+            <span>一句话需求</span>
+            <input type="text" id="linesWant"
+              placeholder="这次想要什么样的？（例：多一点跟找工作有关的；别太丧；短一点）">
+          </label>
+        </div>
+        <p class="note" id="linesRecipe">…</p>
         <div class="lines-actions">
           <label class="field"><span>条数</span>
             <input type="number" id="linesCount" min="5" max="80" step="5" value="30">
@@ -173,6 +201,9 @@
             </select>
           </label>
           <button id="linesGen" class="primary">生成台词</button>
+          <button id="linesOpen" class="ghost" title="打开台词文件（⌘/Ctrl + Shift + L）">
+            打开文件 <kbd>⌘⇧L</kbd>
+          </button>
           <button id="linesClear" class="ghost">清空</button>
           <span class="dim" id="linesStatus"></span>
         </div>

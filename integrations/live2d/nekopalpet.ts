@@ -67,6 +67,11 @@ export interface PetHandle {
   setExpression(name: string): boolean;
   /** 设定嘴张开程度 0..1（口型同步用） */
   setMouth(open: number): void;
+  /**
+   * 视线跟随：归一化光标位置（-1..1，+x 右、+y 下）。
+   * 透明区域是"点穿"的 —— 网页收不到那里的 mousemove，所以由原生面板推过来。
+   */
+  setGaze(nx: number, ny: number): void;
   /** 窗口尺寸变了 → 重新量包围盒 + 重算矩阵 */
   refit(): void;
   destroy(): void;
@@ -498,6 +503,71 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     return playRandomFrom(pool[Math.floor(Math.random() * pool.length)], 3);
   }
 
+  // ── ⑦.5 视线跟随：眼睛和头**看向光标** ────────────────────────────────
+  // ⚠️ 光标位置由**原生面板**推过来（`window.__nekopalCursor` ✗）——
+  //    因为透明区域是"点穿"的 ✗，网页在那些地方**收不到 mousemove** ✗。
+  //
+  // 做法：**混进**动作/呼吸算完的值里 ✗，而不是整个覆盖 ✗ ——
+  // 覆盖的话，头就完全不跟着动作走了（像机器人 ✗）。
+  let gazeTx = 0;  // 目标（-1..1：+x 右、+y 下 ✗）
+  let gazeTy = 0;
+  let gazeX = 0;   // 平滑后的实际值 ✗
+  let gazeY = 0;
+  let gazeW = 0;   // 「正在看她」的权重（0 = 没在看 ✗）
+  let glanceLeft = 0;              // 这一眼还要看多久（秒 ✗）
+  let nextGlance = 1.2 + Math.random() * 2.5;
+  let gazeLogged = false;
+
+  // 只对模型**确实有**的参数动手 ✗（不同形象参数表不一样 ✗）
+  const gazeIds: string[] = [];
+  for (const id of ['ParamEyeBallX', 'ParamEyeBallY', 'ParamAngleX', 'ParamAngleY', 'ParamAngleZ']) {
+    try {
+      if (model.getParameterIndex(id as never) >= 0) gazeIds.push(id);
+    } catch (err) { /* 没有这个参数 —— 跳过 */ }
+  }
+  log('视线参数：找到 ' + gazeIds.length + '/5 → ' + (gazeIds.join(' / ') || '（没有 ✗ 视线跟随会静默失效 ✗）'));
+
+  const updateGaze = (dt: number) => {
+    if (!gazeIds.length) return;
+
+    // ── 「**偶尔**看她一眼」的节奏 ✗ ────────────────────────────────────
+    // 用户原话是"偶尔看向我光标的地方"✗ —— 一直死盯着不像猫 ✗，
+    // 所以做成：休息一会儿 → 瞟一眼（约 1～2.5 秒）→ 再休息 ✗。
+    if (glanceLeft > 0) {
+      glanceLeft -= dt;
+      gazeW += (1 - gazeW) * Math.min(1, dt * 4);
+    } else {
+      nextGlance -= dt;
+      gazeW += (0 - gazeW) * Math.min(1, dt * 2.5);
+      if (nextGlance <= 0) {
+        glanceLeft = 0.9 + Math.random() * 1.7;
+        nextGlance = 2.4 + Math.random() * 4.6;
+        gazeLogged = false;
+      }
+    }
+
+    // 平滑：跟太紧会像抽搐 ✗
+    const k = Math.min(1, dt * 7);
+    gazeX += (gazeTx - gazeX) * k;
+    gazeY += (gazeTy - gazeY) * k;
+
+    const mix = (id: string, target: number, weight: number) => {
+      const w = weight * gazeW;
+      if (w <= 0.001) return; // 没在看 → 完全不干扰动作 ✗
+      try {
+        const cur = Number(model.getParameterValueById(id as never) ?? 0);
+        model.setParameterValueById(id as never, cur * (1 - w) + target * w);
+      } catch (err) { /* 忽略 */ }
+    };
+    // 眼珠：几乎完全听光标的（-1..1 ✗）
+    mix('ParamEyeBallX', gazeX, 0.9);
+    mix('ParamEyeBallY', -gazeY, 0.9);
+    // 头：只轻轻偏一点，别把动作带跑 ✗（-30..30 ✗）
+    mix('ParamAngleX', gazeX * 26, 0.34);
+    mix('ParamAngleY', -gazeY * 20, 0.28);
+    mix('ParamAngleZ', -gazeX * 6, 0.2);
+  };
+
   // ── ⑧ 每帧 ──────────────────────────────────────────────────────────
   let raf = 0;
   let last = performance.now();
@@ -535,6 +605,8 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
 
       // 眨眼放在最后：让它**盖过**呼吸/物理对这些参数的写入 ✗
       updateBlink(dt);
+      // 视线：也放最后 —— 同样要盖过呼吸/物理，但只**混一点**进去 ✗
+      updateGaze(dt);
       // 口型：嘴的张合程度由外部（口型同步）驱动 ✗
       if (mouthIds.length) {
         for (const id of mouthIds) model.setParameterValueById(id as never, mouthOpen);
@@ -577,6 +649,14 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     },
     setMouth: (open: number) => {
       mouthOpen = Math.max(0, Math.min(1, open));
+    },
+    /**
+     * 视线跟随：传**归一化**的光标位置 ✗（-1..1，+x 右、+y 下 ✗）。
+     * 原生面板每 80ms 推一次光标位置过来（透明区域点穿，网页自己收不到 mousemove ✗）。
+     */
+    setGaze: (nx: number, ny: number) => {
+      gazeTx = Math.max(-1, Math.min(1, nx));
+      gazeTy = Math.max(-1, Math.min(1, ny));
     },
     refit: () => fit(),
     destroy() {

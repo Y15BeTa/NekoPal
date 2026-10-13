@@ -26,6 +26,16 @@ from urllib.parse import urlparse
 from nekopal import __version__, pet_panel
 from nekopal.config import Settings, load_settings
 
+
+def _ui_json_path() -> Path:
+    """`~/.config/nekopal/ui.json` —— 猫爪光标 / 视线跟随的开关就存在这里。"""
+
+    from nekopal.packs import config_dir
+
+    return config_dir() / "ui.json"
+
+
+
 WINDOW_TITLE = "NekoPal 猫伴"
 
 #: 置顶小条的标题与默认尺寸（够放一只猫 + 两个按钮）
@@ -219,6 +229,15 @@ def _run_pet_window(
                 click_through=click_through,
                 # 记住窗口位置：你拖到顺手的地方后，重启还在那儿
                 state_path=str(settings.cache_dir / "pet-window.json"),
+                # 🐾 猫爪光标：CSS 的 `cursor:` 在非激活 NSPanel 上不生效，
+                #    只能由原生 NSCursor 来设（见 pet_panel._apply_paw_cursor）
+                cursor_image=(
+                    str(Path(settings.web_dir) / "paw@2x.png")
+                    if settings.web_dir is not None
+                    else None
+                ),
+                # 开关存在 ui.json（主窗「设置」里能关）
+                ui_path=str(_ui_json_path()),
             )
         except Exception as exc:  # noqa: BLE001 - 兜底：退回 pywebview，别让你没得用
             print(

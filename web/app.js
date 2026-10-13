@@ -151,6 +151,8 @@ async function unlockAudio() {
     await primer.play();
     primer.pause();
     setStatus('声音已启用 · opencode 回答完就会自动朗读');
+    // 音频解锁了 → 现在可以安全地把跟读窗接上 WebAudio（给口型用 ✗）
+    startLipReporting();
   } catch (err) {
     setStatus('解锁失败，请直接点一次「朗读」');
   }
@@ -185,10 +187,80 @@ async function probeAutoplay() {
     audioUnlocked = true;
     document.body.classList.add('unlocked');
     if (els.soundGate) els.soundGate.hidden = true;
+    startLipReporting(); // 探针成功 = 音频能用 → 接上口型 ✗
   } else {
     showSoundGate();
   }
   return ok;
+}
+
+// ---- 口型：把跟读窗的音频电平报给角色窗 ------------------------------
+// ⚠️ 2026-07-14 之前**这段根本不存在** ✗ —— 角色窗一直在轮询 `/api/lip` ✗，
+//    但没人 POST 它 ✗ → 电平恒为 0 ✗ → 口型从来没动过 ✗。
+//
+// 为什么非得走 WebAudio：浏览器没有别的办法知道"正在播的音频有多大"✗。
+// ⚠️ 两个坑：
+//   ① `createMediaElementSource` 会把元素**永久**改道到 WebAudio ✗ ——
+//      若 AudioContext 处于 suspended（自动播放策略 ✗），声音会**直接变哑** ✗
+//      → 所以只在**音频已解锁之后**才创建它 ✅
+//   ② 创建后必须 `connect(destination)` ✗，否则没声音 ✗。
+let lip = null;
+
+function startLipReporting() {
+  if (lip) return true;
+  if (!els.audio) return false;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) {
+    report('lip-no-webaudio', {});
+    return false;
+  }
+  try {
+    const ctx = new Ctx();
+    const src = ctx.createMediaElementSource(els.audio);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.55;
+    src.connect(analyser);
+    analyser.connect(ctx.destination); // ⚠️ 不接就没声音 ✗
+    lip = { ctx, analyser, data: new Uint8Array(analyser.fftSize), last: 0, seen: false };
+  } catch (err) {
+    report('lip-init-failed', { err: String(err).slice(0, 160) });
+    return false;
+  }
+  if (lip.ctx.state === 'suspended') lip.ctx.resume().catch(() => {});
+
+  const tick = () => {
+    if (!lip) return;
+    let level = 0;
+    try {
+      lip.analyser.getByteTimeDomainData(lip.data);
+      let sum = 0;
+      for (let i = 0; i < lip.data.length; i++) {
+        const v = (lip.data[i] - 128) / 128;
+        sum += v * v;
+      }
+      level = Math.min(1, Math.sqrt(sum / lip.data.length) * 3.4);
+    } catch (err) { /* 忽略 */ }
+
+    // 约 90ms 一次、每次一个小 POST —— 够跟上口型，也不至于把后端刷爆。
+    const now = performance.now();
+    if (now - lip.last > 90 || level === 0) {
+      lip.last = now;
+      fetch('/api/lip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level }),
+      }).catch(() => { /* 后端忙就丢这一帧 */ });
+    }
+    if (!lip.seen && level > 0.08) {
+      lip.seen = true;
+      report('lip-first-level', { level: Number(level.toFixed(2)) });
+    }
+    requestAnimationFrame(tick);
+  };
+  tick();
+  report('lip-started', { state: lip.ctx.state });
+  return true;
 }
 
 // ---- 最近推送 / 活动记录 --------------------------------------------
@@ -629,7 +701,9 @@ async function loadChatStatus() {
   const rows = [
     d.enabled
       ? '✅ 已启用 —— ' + modeText
-      : '⬜ 未配置大模型 —— 现在用固定的那几句静态台词（完全能玩，想升级就填下面两个文件）',
+      : (d.config_error
+        ? '⚠️ **chat.yaml 读不了** —— ' + d.config_error + '（修好才能用 AI ✗）'
+        : '⬜ 未配置大模型 —— 现在用固定的那几句静态台词（完全能玩，想升级就填下面两个文件）'),
     d.enabled ? '🧠 模型：' + d.model : '',
     '⚙️ 大模型配置：' + d.chat_file,
     '   · api_key：' + (d.has_key
@@ -643,6 +717,22 @@ async function loadChatStatus() {
         : '未填 ⬜（会用仓库里的示例 characters/example-rana/persona.md）'),
     '⚠️ 两条红线：api_key 别提交进任何仓库；profile.md 里别放不该外发的东西',
   ].filter(Boolean);
+
+  // 「生成时到底会用到什么」—— 摊开写，省得你猜 ✗
+  const recipe = document.getElementById('linesRecipe');
+  if (recipe) {
+    if (d.config_error) {
+      recipe.textContent = '⚠️ chat.yaml 有语法错误，生成会失败：' + d.config_error;
+      recipe.classList.add('bad');
+    } else {
+      recipe.classList.remove('bad');
+      recipe.textContent = '生成时会用到：' +
+        (d.enabled ? '✅ 模型 ' + d.model : '⬜ 模型（没配）') + ' · ' +
+        (d.has_persona ? '✅ 角色人设' : '⬜ 角色人设（退回示例）') + ' · ' +
+        (d.has_profile ? '✅ 你的个人信息（' + d.profile_chars + ' 字）' : '⬜ 个人信息（空）') +
+        ' ＋ 上面那句需求 ＋ 条数';
+    }
+  }
 
   body.innerHTML = '';
   for (const t of rows) {
@@ -780,13 +870,14 @@ async function generateLines() {
   const btn = document.getElementById('linesGen');
   const st = document.getElementById('linesStatus');
   const count = parseInt(document.getElementById('linesCount').value, 10) || 30;
+  const want = (document.getElementById('linesWant')?.value || '').trim();
   if (btn) btn.disabled = true;
   if (st) st.textContent = '生成中…（一次写 ' + count + ' 句，别关窗口）';
   try {
     const res = await fetch('/api/lines', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count }),
+      body: JSON.stringify({ count, want }),
     });
     const d = await res.json();
     if (!res.ok) {
@@ -801,6 +892,17 @@ async function generateLines() {
     if (st) st.textContent = '✗ ' + err;
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+/** 一键打开那个**统一的台词池文件** ✗（`~/.config/nekopal/lines.yaml` ✗）。 */
+async function openLinesFile() {
+  const st = document.getElementById('linesStatus');
+  try {
+    await fetch('/api/lines/open', { method: 'POST' });
+    if (st) st.textContent = '已打开台词文件 ✅';
+  } catch (err) {
+    if (st) st.textContent = '✗ 打不开：' + err;
   }
 }
 
@@ -838,7 +940,16 @@ function initLinesPanel() {
   });
 
   document.getElementById('linesGen')?.addEventListener('click', generateLines);
+  document.getElementById('linesOpen')?.addEventListener('click', openLinesFile);
   document.getElementById('linesClear')?.addEventListener('click', clearLines);
+
+  // ⚠️ 「一句话需求」按回车 = 直接生成 ✗（省得去点按钮 ✗）
+  document.getElementById('linesWant')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      generateLines();
+    }
+  });
 
   const sel = document.getElementById('lineSource');
   sel?.addEventListener('change', async () => {
@@ -850,6 +961,15 @@ function initLinesPanel() {
       });
       setStatus(sel.value === 'pool' ? '点击时从台词池抽（快）' : '点击时每次现编（慢，更应景）');
     } catch (err) { /* 忽略 */ }
+  });
+
+  // ⚠️ 快捷键 ⌘/Ctrl + Shift + L ✗ —— 一键打开台词文件 ✅
+  document.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey
+        && (event.key === 'l' || event.key === 'L')) {
+      event.preventDefault();
+      openLinesFile();
+    }
   });
 }
 
@@ -896,6 +1016,17 @@ async function loadSettings(force = false) {
   document.getElementById('setCacheMb').value = s.cache_max_mb ?? 500;
   const dir = document.getElementById('expDir');
   if (dir && s.export_dir) dir.textContent = s.export_dir;
+
+  // 🌟 这两个存的是 `ui.json` ✗（不是 `/api/settings` ✗）
+  //    —— 角色窗每 3 秒轮询 `/api/ui`，改完那边自己就变了 ✅
+  try {
+    const ui = await (await fetch('/api/ui', { cache: 'no-store' })).json();
+    const paw = document.getElementById('setPawCursor');
+    const gaze = document.getElementById('setGaze');
+    if (paw) paw.checked = ui.paw_cursor !== false;
+    if (gaze) gaze.checked = ui.gaze_follow !== false;
+  } catch (err) { /* 读不到就用默认 */ }
+
   refreshCacheInfo();
 }
 
@@ -943,6 +1074,29 @@ function initSettingsPanel() {
   });
 
   document.getElementById('settingsRefresh')?.addEventListener('click', () => loadSettings(true));
+
+  // 🌟 存 `ui.json` 的那两个 ✗（猫爪光标 / 视线跟随 ✗）
+  //    走 `/api/ui` 而不是 `/api/settings` —— 角色窗**每 3 秒轮询 `/api/ui`** ✅，
+  //    所以改完不用重开窗口，那边自己就变了 ✅
+  for (const [id, key, label] of [
+    ['setPawCursor', 'paw_cursor', '🐾 猫爪光标'],
+    ['setGaze', 'gaze_follow', '👀 视线跟随'],
+  ]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener('change', async () => {
+      try {
+        await fetch('/api/ui', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: el.checked }),
+        });
+        setStatus(label + '已' + (el.checked ? '打开' : '关闭'));
+      } catch (err) {
+        setStatus('保存失败（后端没应答）');
+      }
+    });
+  }
 }
 
 initSettingsPanel();
@@ -1002,4 +1156,21 @@ initExportPanel();
 
 // 启动时把设置拉一次（顺便填上导出目录、缓存用量），省得第一次展开面板是空的
 loadSettings();
+
+// ── 启动体检 ───────────────────────────────────────────────────────────
+// ⚠️ 为什么要有它：`chat.yaml` 一旦写坏（多个空格 / 漏个冒号 ✗），
+//    后端会**静默**判定"没配 LLM" ✗ → 点击台词悄悄退回静态那 6 句 ✗。
+//    2026-10-14 真实踩到，用户完全看不出原因 ✗。
+//    → 所以启动时查一次，坏了就**当场写在状态栏上** ✗。
+async function checkChatHealth() {
+  try {
+    const d = await (await fetch('/api/chat', { cache: 'no-store' })).json();
+    if (d.config_error) {
+      setStatus('⚠️ chat.yaml 有语法错误：' + d.config_error + ' —— AI 台词已停用');
+      report('chat-config-error', { error: d.config_error });
+    }
+  } catch (err) { /* 读不到就算了 */ }
+}
+
+checkChatHealth();
 
