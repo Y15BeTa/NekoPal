@@ -245,7 +245,9 @@ function currentOutfitInfo() {
  * 所以菜单打开时**再兜一次底** ✗。
  */
 async function ensureAvatarInfo() {
-  if (avatarInfo?.outfits) return avatarInfo;
+  // ⚠️ 注意判 length ✗：空数组 `[]` 是 **truthy** ✗，
+  //    写成 `if (avatarInfo?.outfits)` 的话永远不重取 ✗（踩过）
+  if (avatarInfo?.outfits?.length) return avatarInfo;
   try {
     avatarInfo = await (await fetch('/api/avatar')).json();
     log(
@@ -303,6 +305,10 @@ function buildOutfits() {
   menu.append(mkButton('‹ 返回', () => showPage(buildRoot)));
   menu.append(mkHead('换装（切过去会重新加载 ✗）'));
   const list = avatarInfo?.outfits || [];
+  log(
+    '换装页：' + list.length + ' 项' +
+      (list.length ? ' → ' + list.map((o) => o.label).join(' / ') : ' ❌ 空 ✗'),
+  );
   if (!list.length) menu.append(mkButton('（没有可选形象）', () => {}, { dim: true }));
   for (const o of list) {
     menu.append(
@@ -320,6 +326,7 @@ function buildMotions() {
   menu.append(mkHead('动作'));
   const o = currentOutfitInfo();
   const groups = o?.motions || [];
+  log('动作页：' + groups.length + ' 组 · currentOutfit=' + (currentOutfit ?? '(null) ✗'));
   if (!groups.length) menu.append(mkButton('（没有动作）', () => {}, { dim: true }));
   for (const g of groups) {
     menu.append(
@@ -340,6 +347,7 @@ function buildExpressions() {
   menu.append(mkHead('表情'));
   const o = currentOutfitInfo();
   const list = o?.expressions || [];
+  log('表情页：' + list.length + ' 个');
   if (!list.length) {
     menu.append(
       mkButton('（这个形象没带表情 ✗ 换 ADV 版就有了）', () => {}, { dim: true }),
@@ -481,7 +489,9 @@ async function boot() {
   currentOutfit = o ? o.folder : null;
   log(
     '角色：' + active.name + ' · 形象 ' + (o ? o.label : '?') +
-      ' · 可选 ' + (active.outfits || []).length + ' 个',
+      ' · 可选 ' + (active.outfits || []).length + ' 个' +
+      ' · currentOutfit=' + (currentOutfit ?? '(null) ✗') +
+      ' · 清单 ' + (active.outfits || []).map((x) => x.label).join(' / '),
   );
 
   const url = chosen ? '/api/avatar/' + avatarInfo.active + '/' + chosen.path : active.url;
