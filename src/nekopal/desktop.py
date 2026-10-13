@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from nekopal import __version__
+from nekopal import __version__, pet_panel
 from nekopal.config import Settings, load_settings
 
 WINDOW_TITLE = "NekoPal 猫伴"
@@ -182,52 +182,24 @@ def spawn_backend(settings: Settings) -> subprocess.Popen:
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _pin_all_spaces(native) -> None:
-    """给原生窗口设 collectionBehavior：**加入所有空间 + 全屏辅助**。"""
+def _run_pet_window(
+    url: str, width: int, height: int, hidden: bool, settings: Settings
+) -> int:
+    """把小条的窗口开出来：**能用 macOS 原生外壳就用原生**，否则退回 pywebview。
 
-    try:
-        from AppKit import (  # type: ignore[import-not-found]
-            NSWindowCollectionBehaviorCanJoinAllSpaces,
-            NSWindowCollectionBehaviorFullScreenAuxiliary,
-            NSWindowCollectionBehaviorStationary,
-        )
-    except Exception as exc:  # noqa: BLE001 - 没装 pyobjc 就跳过
-        print("置顶小条：没有 pyobjc（{}），跳过「所有空间可见」".format(exc), flush=True)
-        return
-
-    try:
-        native.setCollectionBehavior_(
-            NSWindowCollectionBehaviorCanJoinAllSpaces
-            | NSWindowCollectionBehaviorStationary
-            | NSWindowCollectionBehaviorFullScreenAuxiliary
-        )
-        print("置顶小条：已设为「所有空间可见」（切到全屏 App 也不会消失）", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        print("置顶小条：设置「所有空间可见」失败：{}".format(exc), flush=True)
-
-
-def _pin_all_spaces_when_ready(window) -> None:  # pragma: no cover - 已停用，见下
-    """**已停用**：留在这里是为了记住这个坑。
-
-    实测：**这个 pywebview 版本里读 `window.native` 就会崩**
-    （`SIGTRAP` / `regionIneligible`，栈上全是 `NSWindow` / `objc`；
-    后台线程和 `loaded` 事件两条路都试过，都崩）。
-
-    所以「切到全屏 App 也不消失」这一条**目前做不到** —— 已回退，小条恢复可用。
-    需要它的时候，回到 `nekopal control <action>` + 全局快捷键那条路
-    （快捷键**不受空间限制**，全屏时照样能用）。
+    为什么优先原生：只有 ``NSPanel`` 能**浮在别的 App 的全屏之上**，
+    pywebview 的窗口做不到（根因与证据见 ``nekopal.pet_panel`` 的模块注释）。
     """
 
-
-def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
-    """打开「置顶小条」：透明 / 无边框 / 全局置顶 / 可拖动。
-
-    这是**桌宠（角色层）的第一步** —— 先把「置顶窗口 + 点击控制」这套基础设施做出来，
-    等有 Live2D 模型后，同一个窗口就换成角色本体（设计文档 6.5 / 6.9）。
-
-    为什么它比全局快捷键更好：**它一直在那儿** —— 点一下就暂停/继续，
-    不用切窗口，也不用记组合键。而快捷键那套仍然保留作为备选。
-    """
+    # ⚠️ hidden（--hidden，给测试用）时走 pywebview：原生外壳不方便"隐藏启动"。
+    if not hidden and pet_panel.available():
+        try:
+            return pet_panel.run(url, width=width, height=height)
+        except Exception as exc:  # noqa: BLE001 - 兜底：退回 pywebview，别让你没得用
+            print(
+                "原生小条启动失败（{}），改用 pywebview。".format(exc),
+                file=sys.stderr,
+            )
 
     try:
         import webview
@@ -237,6 +209,38 @@ def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
             file=sys.stderr,
         )
         return 1
+
+    webview.create_window(
+        PET_TITLE,
+        url,
+        width=width,
+        height=height,
+        frameless=True,     # 无边框
+        transparent=True,   # 透明背景（桌宠的根基）
+        on_top=True,        # 本空间内始终在最前（跨全屏要 NSPanel，见上）
+        easy_drag=True,     # 拖哪儿都能挪
+        resizable=False,
+        hidden=hidden,
+    )
+    webview.start(
+        private_mode=False,
+        storage_path=str(settings.cache_dir / "webview"),
+    )
+    return 0
+
+
+def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
+    """打开「置顶小条」：透明 / 无边框 / 全局置顶 / 可拖动。
+
+    这是**桌宠（角色层）的第一步** —— 先把「置顶窗口 + 点击控制」这套基础设施做出来，
+    等有 Live2D 模型后，同一个窗口就换成角色本体（设计文档 6.5 / 6.9）。
+
+    macOS 上优先用**原生 ``NSPanel``**（见 ``_run_pet_window``）：它是唯一能
+    **浮在别的 App 全屏之上**的做法 —— 也就是"你全屏看视频时它也不会消失"。
+
+    为什么它比全局快捷键更好：**它一直在那儿** —— 点一下就暂停/继续，
+    不用切窗口，也不用记组合键。而快捷键那套仍然保留作为备选。
+    """
 
     settings = settings or load_settings()
     base = "http://{}:{}".format(settings.host, settings.port)
@@ -253,33 +257,12 @@ def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
             print("后端启动失败：请手动运行 `nekopal serve` 后再试。", file=sys.stderr)
 
     width, height = PET_SIZE
-    webview.create_window(
-        PET_TITLE,
-        base + "/pet.html",
-        width=width,
-        height=height,
-        frameless=True,     # 无边框
-        transparent=True,   # 透明背景（桌宠的根基）
-        on_top=True,        # 本空间内始终在最前
-        easy_drag=True,     # 拖哪儿都能挪
-        resizable=False,
-        hidden=hidden,
-    )
 
     try:
-        # ⚠️ 这里**故意不做**「加入所有空间」的尝试：
-        #    实测这个 pywebview 版本里读 `window.native` 会直接 SIGTRAP 崩掉
-        #    （后台线程 / loaded 事件两条路都试过）。小条先保持可用；
-        #    全屏场景请用 `nekopal control` + 全局快捷键（快捷键不受空间限制）。
-        webview.start(
-            private_mode=False,
-            storage_path=str(settings.cache_dir / "webview"),
-        )
+        return _run_pet_window(base + "/pet.html", width, height, hidden, settings)
     finally:
         if child is not None and child.poll() is None:
             child.terminate()
-
-    return 0
 
 
 def run_app(
