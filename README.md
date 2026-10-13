@@ -268,6 +268,49 @@ uv run python scripts/push.py --file 讲义.md --voice edge:zh-CN-XiaoxiaoNeural
 
 ---
 
+### 全局快捷键：不切窗口就能暂停 / 继续 🎧
+
+**为什么需要它**：NekoPal 通常在**另一个窗口**里 —— opencode 全屏时切过去很麻烦。
+所以控制入口**不依赖窗口聚焦**：命令发给后端，后端再广播给跟读窗。
+
+```bash
+nekopal control toggle     # 暂停 / 继续（来回切）
+nekopal control pause      # 只暂停
+nekopal control resume     # 只继续
+nekopal control stop       # 停止
+nekopal control next|prev  # 下一句 / 上一句
+```
+
+任何时候都能用，**跟当前焦点在哪个窗口无关** ✅
+
+#### 怎么绑到键盘（三选一）
+
+**① 快捷指令（Shortcuts.app）—— 推荐，系统自带**
+
+1. 打开「快捷指令」→ 新建
+2. 加操作「**运行 Shell 脚本**」，脚本填**绝对路径**：
+   ```
+   /Users/yuwenyan/Documents/NekoPal/.venv/bin/nekopal control toggle
+   ```
+   （快捷键调用时 PATH 很干净，所以**必须写绝对路径**）
+3. 在快捷指令的详情面板里点「**添加键盘快捷键**」→ 按一个组合（如 `⌃⌥⌘P`）
+
+**② Automator 快速操作 + 系统设置**
+
+1. Automator → 新建「快速操作」→ 加「运行 Shell 脚本」→ 同上填命令 → 存为「NekoPal 暂停继续」
+2. 系统设置 → 键盘 → 键盘快捷键 → **服务** → 找到它 → 指定快捷键
+
+**③ 键盘 / 鼠标驱动软件**（Karabiner、BetterTouchTool 等）→ 直接绑 `scripts/toggle.command`
+
+#### 跟读窗自己聚焦时
+
+**按空格** = 暂停 / 继续 ✅（不用去点按钮）
+
+> ⚠️ 后退一步的兜底：`nekopal control` 需要 NekoPal 在跑。
+> 如果它说「当前没有跟读窗连着」，说明窗口没开 —— 双击 `NekoPal.app` 即可。
+
+---
+
 ## 设计原则
 
 1. **离线优先，联网可选**：默认后端必须能离线工作，联网后端是"可选升级"。

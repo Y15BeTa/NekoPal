@@ -338,6 +338,27 @@ def build_router(runtime: Runtime) -> APIRouter:
         runtime.record("append", task_id=task_id, source="follow", **report)
         return report
 
+    # -- 远程控制（给「全局快捷键」用）-----------------------------------
+    @router.post("/control", status_code=202)
+    async def control(request: Request) -> dict:
+        """远程控制跟读窗：暂停 / 继续 / 停止 / 上下一句。
+
+        **为什么不由后端直接暂停**：声音在跟读窗（浏览器）里 ——
+        后端只能**广播**，由前端真正去 pause/resume。
+        这样任何东西（快捷键 / 脚本 / 别的程序）都能控制朗读，
+        **不用先把 NekoPal 窗口切到前面**（这正是它的用途）。
+        """
+
+        data = await _json(request)
+        action = str((data or {}).get("action") or "toggle")
+        allowed = ("toggle", "pause", "resume", "stop", "next", "prev")
+        if action not in allowed:
+            raise _invalid("action 只能是 {}".format(" / ".join(allowed)))
+
+        runtime.record("control", action=action)
+        runtime.notify("control", action=action)
+        return {"ok": True, "action": action, "subscribers": runtime.subscriber_count}
+
     @router.post("/export")
     async def export(request: Request) -> dict:
         """把整篇合成结果导出成一个音频文件（设计文档 4.2 / 5.8）。

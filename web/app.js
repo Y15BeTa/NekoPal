@@ -407,12 +407,33 @@ function connectLive() {
     subscribe(data.task_id, 0);
   });
 
+  live.addEventListener('control', (event) => {
+    // 远程控制（全局快捷键 → 后端 → 广播到这里）
+    let data = {};
+    try { data = JSON.parse(event.data); } catch (err) { return; }
+    const action = data.action || 'toggle';
+    if (action === 'toggle') reader.toggle();
+    else if (action === 'pause') reader.pause();
+    else if (action === 'resume') reader.resume();
+    else if (action === 'next') reader.next();
+    else if (action === 'prev') reader.prev();
+    else if (action === 'stop') { reader.pause(); setStatus('已停止'); }
+  });
+
   live.addEventListener('error', () => {
     // EventSource 自带重连；这里不打扰用户
   });
 }
 
 // ---- 事件绑定 --------------------------------------------------------
+// 跟读窗自己聚焦时，空格 = 暂停/继续（不用去点按钮）
+document.addEventListener('keydown', (event) => {
+  if (event.code !== 'Space') return;
+  const tag = (event.target && event.target.tagName) || '';
+  if (tag === 'TEXTAREA' || tag === 'INPUT' || (event.target && event.target.isContentEditable)) return;
+  event.preventDefault();
+  reader.toggle();
+});
 els.readBtn.addEventListener('click', () => startRead(els.input.value));
 els.clearBtn.addEventListener('click', () => {
   els.input.value = '';

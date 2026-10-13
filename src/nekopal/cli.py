@@ -3,6 +3,7 @@
     nekopal serve          启动本地服务
     nekopal up             一键启动（变声服务 + 后端 + 原生窗口）
     nekopal down           停掉窗口、后端与变声服务
+    nekopal control toggle 远程暂停/继续（给全局快捷键用）
     nekopal app            打开原生窗口（桌面外壳）
     nekopal open           在浏览器打开跟读窗
     nekopal read "文字"    命令行直接朗读（本机播放）
@@ -440,6 +441,42 @@ def _cmd_up(args: argparse.Namespace) -> int:
             stop_rvc_service(verbose=not args.quiet)
 
 
+def _cmd_control(args: argparse.Namespace) -> int:
+    """远程控制跟读窗（暂停 / 继续 / 停止 / 上下一句）—— 给**全局快捷键**用。
+
+    为什么需要"远程"：NekoPal 通常在**另一个窗口**里（opencode 全屏时尤其难切），
+    所以控制入口**不能依赖窗口聚焦**。走 HTTP 发给后端，后端再广播给跟读窗。
+    """
+
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    settings = load_settings()
+    if args.host:
+        settings.host = args.host
+    if args.port:
+        settings.port = args.port
+
+    url = "http://{}:{}/api/control".format(settings.host, settings.port)
+    body = _json.dumps({"action": args.action}).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            data = _json.loads(response.read() or b"{}")
+    except (urllib.error.URLError, OSError) as exc:
+        print("发送失败（NekoPal 没在跑？）：{}".format(exc), file=sys.stderr)
+        return 1
+
+    windows = int(data.get("subscribers") or 0)
+    print("已发送 {} · {} 个跟读窗收到".format(args.action, windows))
+    if not windows:
+        print("⚠️ 当前没有跟读窗连着 —— 打开 NekoPal.app 才会响应", file=sys.stderr)
+    return 0
+
+
 def _cmd_down(args: argparse.Namespace) -> int:
     """停掉原生窗口、后端与变声服务。"""
 
@@ -551,6 +588,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("down", help="停掉窗口、后端与变声服务")
 
+    control_cmd = sub.add_parser("control", help="远程控制跟读窗（暂停 / 继续 / 停止）")
+    control_cmd.add_argument(
+        "action",
+        nargs="?",
+        default="toggle",
+        choices=["toggle", "pause", "resume", "stop", "next", "prev"],
+    )
+    control_cmd.add_argument("--host", default=None)
+    control_cmd.add_argument("--port", type=int, default=None)
+
     auto = sub.add_parser("autostart", help="开机自启（macOS LaunchAgent）")
     auto.add_argument(
         "action", nargs="?", default="status", choices=["status", "install", "uninstall"]
@@ -570,6 +617,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "app": _cmd_app,
         "up": _cmd_up,
         "down": _cmd_down,
+        "control": _cmd_control,
         "open": _cmd_open,
         "read": _cmd_read,
         "voices": _cmd_voices,

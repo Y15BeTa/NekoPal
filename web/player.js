@@ -208,6 +208,29 @@ export class Reader {
     }
   }
 
+  /** 显式暂停（远程控制用；toggle 是用户点按钮时的"切换"）。 */
+  pause() {
+    if (!this.playing) return;
+    this.audio.pause();
+    this.playing = false;
+    this._updateButton();
+    this.onStatus('已暂停');
+  }
+
+  /** 显式继续。还没开始过就从起点开播。 */
+  resume() {
+    if (this.playing) return;
+    if (this.current < 0) {
+      this.playFrom(this.startIndex);
+      return;
+    }
+    this.audio.play().then(() => {
+      this.playing = true;
+      this._updateButton();
+      this.onStatus('播放中');
+    }).catch(() => this.onStatus('播放失败'));
+  }
+
   toggle() {
     if (this.playing) {
       this.audio.pause();
