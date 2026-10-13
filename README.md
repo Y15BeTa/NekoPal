@@ -97,10 +97,16 @@ NekoPal 的定位是：**整块朗读 + 跟读高亮 + 角色化身 + 离线优�
 2. 编辑 `chat.yaml`，填三行 ✗：
 
    ```yaml
-   base_url: "https://你的网关/v1"   # 不要带 /chat/completions
-   api_key: "sk-..."
-   model: "gpt-4o-mini"
+   base_url: "https://api.deepseek.com"   # 不要带 /chat/completions
+   api_key: "sk-..."                      # 你自己的
+   model: "deepseek-flash"                # DeepSeek-V4.1-Flash
    ```
+
+   > 上面这三行是**实测跑通**的一份 ✗（`deepseek-flash` 是官方 `/models` 里给出的 ID ✗）。
+   > 用别的 OpenAI 兼容网关也行 ✗ —— 把 `base_url` 换成它的根地址、
+   > `model` 换成它在 `/models` 里列出的 ID 即可 ✗。
+   >
+   > 💡 想确认模型 ID：直接 `curl https://api.deepseek.com/models -H "Authorization: Bearer <key>"` ✗
 
 3. **关掉 App 再打开**（配置在启动时读取）
 
