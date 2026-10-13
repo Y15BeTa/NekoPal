@@ -23,6 +23,61 @@ from nekopal.server.schemas import InvalidRequest, parse_append_request, parse_r
 from nekopal.server.state import Runtime
 
 
+def _outfit_label(folder: str) -> str:
+    """把形象目录名翻成人话（右键菜单里要显示 ✗）。"""
+
+    name = folder.replace("live2d_rana_003_", "").replace("adv_", "")
+    known = {
+        "live_01": "演出服",
+        "live_01_low": "演出服·低模",
+        "casual_spring_01": "便服·春",
+        "school_winter_jhs": "校服·冬",
+        "school_summer_jhs": "校服·夏",
+    }
+    label = known.get(name, name)
+    if folder.startswith("adv_"):
+        label += "（ADV）"
+    return label
+
+
+def _list_outfits(pack_dir: Path) -> list:
+    """扫出角色包里所有可用的形象，并带上各自的**动作分组 / 表情**。
+
+    为什么要连动作/表情一起报：右键菜单的「动作 / 表情」子菜单得知道
+    这个形象到底有什么 ✗ —— 不同形象差别很大
+    （实测：`live_*` 只有 9 个动作、**0 个表情**；`adv_*` 有 57 个动作 + 19 个表情 ✗）。
+    """
+
+    outfits = []
+    model_root = pack_dir / "model"
+    if not model_root.is_dir():
+        return outfits
+
+    for model_file in sorted(model_root.glob("*/*.model3.json")):
+        try:
+            data = json.loads(model_file.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - 单个形象读坏了不该影响整体
+            continue
+        refs = data.get("FileReferences") or {}
+        motions = refs.get("Motions") or {}
+        outfits.append(
+            {
+                "folder": model_file.parent.name,
+                "label": _outfit_label(model_file.parent.name),
+                "path": str(model_file.relative_to(pack_dir)),
+                # 动作按「组」报，每组有多少个 —— 菜单里按组列出更好点
+                "motions": [
+                    {"group": g, "count": len(v)} for g, v in motions.items()
+                ],
+                "expressions": [
+                    e.get("Name") for e in (refs.get("Expressions") or []) if e.get("Name")
+                ],
+                "physics": bool(refs.get("Physics")),
+            }
+        )
+    return outfits
+
+
 def _invalid(message: str) -> HTTPException:
     return HTTPException(400, {"code": "INVALID_REQUEST", "message": message})
 
@@ -505,7 +560,7 @@ def build_router(runtime: Runtime) -> APIRouter:
 
     @router.get("/avatar")
     async def avatar() -> dict:
-        """当前可用的角色形象（前端据此决定要不要挂 Live2D）。
+        """当前可用的角色形象 + 每个形象的**动作分组 / 表情**（右键菜单要用）。
 
         只报**模型文件齐全**的角色包 —— 缺形象的会降级成"只有声音"，
         朗读不受影响（设计文档 4.5）。
@@ -532,6 +587,7 @@ def build_router(runtime: Runtime) -> APIRouter:
                     "url": "/api/avatar/{}/{}".format(c.id, rel) if rel else None,
                     "lipsync": {"mode": c.lipsync_mode, "param": c.lipsync_param},
                     "expressions": dict(c.expressions),
+                    "outfits": _list_outfits(Path(c.path)),
                 }
             )
         return {"characters": out, "active": out[0]["id"] if out else None}

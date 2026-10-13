@@ -91,9 +91,10 @@ def is_over_any(rects, point, slack: float = 6.0) -> bool:
 
 
 def _load_origin(state_path: Optional[str]) -> Optional[tuple]:
-    """读回上次拖到的窗口位置；没有 / 坏了都返回 None（用默认角落）。
+    """读回上次拖到的窗口位置与尺寸；没有 / 坏了都返回 None（用默认 ✗）。
 
-    为什么要有它：桌宠被你拖到顺手的位置后，重启又弹回角落会很烦 ✗。
+    为什么要有它：桌宠被你拖到顺手的位置、调到顺眼的大小后，
+    重启又弹回角落会很烦 ✗。
     """
 
     if not state_path:
@@ -102,13 +103,16 @@ def _load_origin(state_path: Optional[str]) -> Optional[tuple]:
     try:
         with open(state_path, encoding="utf-8") as fh:
             data = json.load(fh)
-        return float(data["x"]), float(data["y"])
+        w = data.get("w")
+        h = data.get("h")
+        return (float(data["x"]), float(data["y"]), float(w) if w else None,
+                float(h) if h else None)
     except Exception:  # noqa: BLE001 - 文件不存在 / 损坏都无所谓，不算错误
         return None
 
 
-def _save_origin(state_path: Optional[str], origin) -> None:
-    """把窗口位置记下来（失败就算了，不值得打扰用户）。"""
+def _save_origin(state_path: Optional[str], frame) -> None:
+    """把窗口位置**和尺寸**记下来（失败就算了，不值得打扰用户）。"""
 
     if not state_path:
         return
@@ -116,7 +120,15 @@ def _save_origin(state_path: Optional[str], origin) -> None:
     try:
         Path(state_path).parent.mkdir(parents=True, exist_ok=True)
         with open(state_path, "w", encoding="utf-8") as fh:
-            json.dump({"x": round(origin.x), "y": round(origin.y)}, fh)
+            json.dump(
+                {
+                    "x": round(frame.origin.x),
+                    "y": round(frame.origin.y),
+                    "w": round(frame.size.width),
+                    "h": round(frame.size.height),
+                },
+                fh,
+            )
     except Exception:  # noqa: BLE001
         pass
 
@@ -243,6 +255,23 @@ def run(
                     )
                 )
                 self._dirty = True  # 让 _tick 稍后把新位置落盘
+            elif action == "resize":
+                # 窗口缩放（右键菜单里的放大/缩小 ✗）
+                # 以**左下角**为锚点，所以窗口是往上/往右长 ✗ —— 贴右下角的桌宠
+                # 这个方向最自然（不会跑出屏幕 ✗）
+                frame = self._panel.frame()
+                width = float(body.get("w", frame.size.width))
+                height = float(body.get("h", frame.size.height))
+                if width >= 80 and height >= 80:
+                    self._panel.setFrame_display_(
+                        NSMakeRect(frame.origin.x, frame.origin.y, width, height),
+                        True,
+                    )
+                    self._dirty = True
+                    print(
+                        "置顶小条：窗口缩放到 {}×{}".format(int(width), int(height)),
+                        flush=True,
+                    )
             elif action == "dragging":
                 self._dragging = bool(getter("on"))
             elif action == "hot":
@@ -373,10 +402,14 @@ def run(
     view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
     panel.setContentView_(view)
 
-    # 位置：优先回到你上次拖到的地方（不然每次启动都被拽回角落，很烦 ✗）
+    # 位置与尺寸：优先回到你上次调好的样子（不然每次启动都被拽回角落 ✗）
     saved = _load_origin(state_path)
     if saved is not None:
-        panel.setFrameOrigin_(NSMakePoint(saved[0], saved[1]))
+        x, y, w, h = saved
+        if w and h:
+            panel.setFrame_display_(NSMakeRect(x, y, w, h), False)
+        else:
+            panel.setFrameOrigin_(NSMakePoint(x, y))
 
     # ── 精确命中 + 记住位置 ──────────────────────────────────────────────
     # 为什么需要精确命中：窗口是个**矩形**，但角色不是 ✗ ——
@@ -508,7 +541,7 @@ def run(
             if bridge._dirty and now - saved_at[0] > 1.0:
                 saved_at[0] = now
                 bridge._dirty = False
-                _save_origin(state_path, frame.origin)
+                _save_origin(state_path, frame)
         except Exception as exc:  # noqa: BLE001 - 看得见 > 静默消失
             print("置顶小条：内部计时器出错：{}".format(exc), flush=True)
 

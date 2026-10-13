@@ -27,6 +27,7 @@ import { CubismModelSettingJson } from './cubismmodelsettingjson';
 import { CubismEyeBlink } from './effect/cubismeyeblink';
 import { CubismBreath, BreathParameterData } from './effect/cubismbreath';
 import { CubismBreathUpdater } from './motion/cubismbreathupdater';
+import { CubismExpressionUpdater } from './motion/cubismexpressionupdater';
 import { CubismEyeBlinkUpdater } from './motion/cubismeyeblinkupdater';
 import { CubismMotion } from './motion/cubismmotion';
 import { CubismMotionManager } from './motion/cubismmotionmanager';
@@ -56,6 +57,18 @@ export interface PetHandle {
   playReaction(): boolean;
   /** 眨一次眼 */
   blink(): boolean;
+  /** 有哪些动作分组（右键菜单用） */
+  listMotionGroups(): string[];
+  /** 播某一组的随机一个动作 */
+  playMotionGroup(group: string): boolean;
+  /** 有哪些表情（右键菜单用；可能为空 ✗） */
+  listExpressions(): string[];
+  /** 切表情 */
+  setExpression(name: string): boolean;
+  /** 设定嘴张开程度 0..1（口型同步用） */
+  setMouth(open: number): void;
+  /** 窗口尺寸变了 → 重新量包围盒 + 重算矩阵 */
+  refit(): void;
   destroy(): void;
 }
 
@@ -75,6 +88,11 @@ class PetUserModel extends CubismUserModel {
 
   pose(): any {
     return (this as any)._pose;
+  }
+
+  /** 表情管理器（protected ✗ 只能从子类拿） */
+  expressions(): any {
+    return (this as any)._expressionManager;
   }
 }
 
@@ -108,8 +126,11 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
   const option = new Option();
   option.logFunction = (m: string) => log('[cubism] ' + m);
   option.loggingLevel = LogLevel.LogLevel_Error;
-  if (!CubismFramework.startUp(option)) throw new Error('startUp 失败');
-  CubismFramework.initialize();
+  // ⚠️ **换装**要能重新挂载 ✗ —— 所以只在没启动时 startUp（框架是单例 ✗）
+  if (CubismFramework.isStarted && !CubismFramework.isStarted()) {
+    if (!CubismFramework.startUp(option)) throw new Error('startUp 失败');
+    CubismFramework.initialize();
+  }
 
   // ── ② 读 model3.json ─────────────────────────────────────────────────
   const dir = opts.modelUrl.slice(0, opts.modelUrl.lastIndexOf('/') + 1);
@@ -252,49 +273,59 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
       ' · window ' + window.innerWidth + '×' + window.innerHeight,
   );
 
-  const canvasAspect = canvas.width / canvas.height;
+  /**
+   * 量包围盒 + 算 MVP 矩阵。
+   *
+   * 抽成函数是因为**窗口可以缩放** ✗ —— 尺寸一变就要重算（见 refit ✗）。
+   * 矩阵是**手写**的：scale(2/visW, 2/visH) + translate(-cx,-cy)。
+   * 用 CubismViewMatrix 会被它的 maxScreenRect 夹取平移 ✗（默认全 0 ✗），
+   * 把视图挤成一团、脸就成锥子了 ✗（真踩过）。
+   */
+  let mvpMatrix = new CubismMatrix44();
 
-  const b = modelBounds();
-  const bw = b.x1 - b.x0;
-  const bh = b.y1 - b.y0;
-  const cx = (b.x0 + b.x1) / 2;
-  const cy = (b.y0 + b.y1) / 2;
+  function fit(): void {
+    // ⚠️ 必须先 update 一次再量 ✗：getDrawableVertexPositions 给的是"上一帧的顶点"，
+    //    挂载时还没跑过任何一帧，量到的是空数据 ✗
+    model.update();
 
-  // 可视范围（**模型坐标系**里的宽高）
-  // ⚠️ 关键：finalW/finalH 的比值**必须等于 canvas 的宽高比** → 否则就是横向拉扁 ✗
-  let visW = (bh / FIT) * canvasAspect; // 先按高度填满
-  let visH = bh / FIT;
-  if (visW < bw / FIT) {
-    // 她比窗口"胖" → 改成按宽度填满（宁可上下留白，也不裁人 ✗）
-    visW = bw / FIT;
-    visH = visW / canvasAspect;
+    const canvasAspect = canvas.width / canvas.height;
+    const b = modelBounds();
+    const bw = b.x1 - b.x0;
+    const bh = b.y1 - b.y0;
+    const cx = (b.x0 + b.x1) / 2;
+    const cy = (b.y0 + b.y1) / 2;
+
+    // 可视范围（**模型坐标系**里的宽高）
+    // ⚠️ 关键：visW/visH 的比值**必须等于 canvas 的宽高比** → 否则就是横向拉扁 ✗
+    let visW = (bh / FIT) * canvasAspect;
+    let visH = bh / FIT;
+    if (visW < bw / FIT) {
+      // 她比窗口"胖" → 改成按宽度填满（宁可上下留白，也不裁人 ✗）
+      visW = bw / FIT;
+      visH = visW / canvasAspect;
+    }
+
+    const matrix = new CubismMatrix44();
+    matrix.scale(2 / visW, 2 / visH);
+    matrix.translate(-cx, -cy);
+    mvpMatrix = matrix;
+
+    // 验算：模型 x 单位与 y 单位最终落在屏幕上的**像素数**应当相等（相等=不变形 ✗）
+    const pxPerUnitX = (2 / visW) * canvas.width * 0.5;
+    const pxPerUnitY = (2 / visH) * canvas.height * 0.5;
+
+    log(
+      '缩放：角色 ' + bw.toFixed(3) + '×' + bh.toFixed(3) +
+        '（' + (bw / bh).toFixed(3) + '）· 可视 ' + visW.toFixed(3) + '×' +
+        visH.toFixed(3) + '（' + (visW / visH).toFixed(3) + '）· canvas ' +
+        canvas.width + '×' + canvas.height +
+        '（' + canvasAspect.toFixed(3) + '）· 每单位像素 x=' +
+        pxPerUnitX.toFixed(1) + ' y=' + pxPerUnitY.toFixed(1) +
+        (Math.abs(pxPerUnitX - pxPerUnitY) < 1 ? ' ✅不变形' : ' ❌变形!'),
+    );
   }
 
-  const sx = 2 / visW;
-  const sy = 2 / visH;
-
-  // NDC_x = sx·(x-cx)，NDC_y = sy·(y-cy)
-  // CubismMatrix44 是列主序、平移在第 4 列；translate() 在缩放之后调用，
-  // 于是实际平移是 sx·(-cx)、sy·(-cy) —— 正是我们要的 ✅
-  const modelMatrix = new CubismMatrix44();
-  modelMatrix.scale(sx, sy);
-  modelMatrix.translate(-cx, -cy);
-
-  log(
-    '缩放：角色包围盒 ' + bw.toFixed(3) + '×' + bh.toFixed(3) +
-      '（比例 ' + (bw / bh).toFixed(3) + '）· 画布 ' +
-      model.getCanvasWidth() + '×' + model.getCanvasHeight() +
-      '（' + (model.getCanvasWidth() / model.getCanvasHeight()).toFixed(3) + '）' +
-      ' · 可视 ' + visW.toFixed(3) + '×' + visH.toFixed(3) +
-      '（' + (visW / visH).toFixed(3) + '）· canvas 宽高比 ' +
-      canvasAspect.toFixed(3) +
-      ' · 缩放 ' + sx.toFixed(3) + '/' + sy.toFixed(3) + ' · 边距 ' + FIT,
-  );
-  log(
-    '包围盒四角 x[' + b.x0.toFixed(3) + ',' + b.x1.toFixed(3) + '] y[' +
-      b.y0.toFixed(3) + ',' + b.y1.toFixed(3) + '] 中心(' +
-      cx.toFixed(3) + ',' + cy.toFixed(3) + ')',
-  );
+  fit();
 
   /** 量出角色真正占了多大（画布往往比角色宽 ✗，按画布缩放会显得又小又细 ✗） */
   function modelBounds(): { x0: number; y0: number; x1: number; y1: number } {
@@ -361,6 +392,31 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
 
   const idleGroup = groups.find((g) => /idle/i.test(g)) || groups[0] || '';
 
+  // ── 表情（这个形象可能是 0 个 ✗；adv_ 那几个有 19 个 ✅）────────────────
+  const expressionMotions = new Map<string, unknown>();
+  const exprManager = user.expressions();
+  try {
+    const exprCount = setting.getExpressionCount ? setting.getExpressionCount() : 0;
+    for (let i = 0; i < exprCount; i++) {
+      const name = setting.getExpressionName(i);
+      const file = setting.getExpressionFileName(i);
+      if (!file) continue;
+      const buf = await fetchBuffer(joinUrl(dir, file));
+      if (!buf) continue;
+      const m = user.loadExpression(buf, buf.byteLength, name);
+      if (m) expressionMotions.set(name, m);
+    }
+    if (exprManager) {
+      scheduler.addUpdatableList(new CubismExpressionUpdater(exprManager));
+    }
+    log(
+      '表情已加载 ' + expressionMotions.size + ' 个' +
+        (exprCount ? '' : '（⚠️ 这个形象本身没带表情 ✗）'),
+    );
+  } catch (err) {
+    log('表情加载出错（不影响画面）✗ ' + (err && err.message ? err.message : err));
+  }
+
   // ── 眨眼（自己实现）─────────────────────────────────────────────────
   // 框架的 CubismEyeBlink 在这形象上内部 id 会是 null，一跑就炸 ✗。
   // 但眨眼本质就是「把 ParamEyeLOpen / ParamEyeROpen 压到 0 再抬回来」✗ ——
@@ -376,6 +432,10 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     ? setting.getLipSyncParameterCount()
     : 0;
   for (let i = 0; i < lipCount; i++) lipIds.push(setting.getLipSyncParameterId(i));
+
+  // 口型要动的就是 LipSync 组（= ParamMouthOpenY ✗），数值由外部喂进来 ✗
+  const mouthIds = lipIds;
+  let mouthOpen = 0;
 
   // ⚠️ 必须给每个 motion 调 setEffectIds：CubismMotion 的 _eyeBlinkParameterIds
   //    默认是 **null**，而 updateParameters 里直接 `.length` → 一播就抛错 ✗
@@ -475,6 +535,10 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
 
       // 眨眼放在最后：让它**盖过**呼吸/物理对这些参数的写入 ✗
       updateBlink(dt);
+      // 口型：嘴的张合程度由外部（口型同步）驱动 ✗
+      if (mouthIds.length) {
+        for (const id of mouthIds) model.setParameterValueById(id as never, mouthOpen);
+      }
 
       model.update(); // Core 把顶点算成**变形后**的位置 —— 不做就会散架 ✗
 
@@ -483,7 +547,7 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
 
       // 手写矩阵：**直接就是它**（不再有 view 那一层 ✗）
       const mvp = new CubismMatrix44();
-      mvp.setMatrix(modelMatrix.getArray());
+      mvp.setMatrix(mvpMatrix.getArray());
       renderer.setMvpMatrix(mvp);
       renderer.drawModel(opts.shaderBase);
     } catch (err) {
@@ -502,9 +566,23 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     height: model.getCanvasHeight(),
     playReaction,
     blink,
+    listMotionGroups: () => groups.slice(),
+    playMotionGroup: (group: string) => playRandomFrom(group, 3),
+    listExpressions: () => Array.from(expressionMotions.keys()),
+    setExpression: (name: string) => {
+      const m = expressionMotions.get(name);
+      if (!m || !exprManager) return false;
+      exprManager.startMotion(m, false);
+      return true;
+    },
+    setMouth: (open: number) => {
+      mouthOpen = Math.max(0, Math.min(1, open));
+    },
+    refit: () => fit(),
     destroy() {
       cancelAnimationFrame(raf);
-      CubismFramework.dispose();
+      // ⚠️ **故意不 dispose 框架**：换装时要能重新挂载 ✗
+      //    （dispose 之后再 startUp 很容易出幺蛾子；框架本来就是单例 ✗）
     },
   };
 }

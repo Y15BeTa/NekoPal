@@ -177,6 +177,78 @@ body:not(.native) .actions:hover {
   background: rgba(150, 150, 160, 0.55);
 }
 
+/* ── 右键菜单 ────────────────────────────────────────────────────
+ * 用 HTML 自己画：原生 NSPanel 没有可用的 context menu ✗。
+ * ⚠️ 菜单必须**报进「可点区域」** ✗ —— 否则精确命中会把它判成透明区、
+ *    点穿到桌面，菜单就点不动了 ✗（见 character.js 的 reportHotRects ✗） */
+.menu {
+  pointer-events: auto;
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  min-width: 156px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  padding: 6px;
+  border: 0.5px solid rgba(255, 255, 255, 0.85);
+  border-radius: 12px;
+  background: rgba(250, 250, 252, 0.88);
+  color: #1f2024;
+  font-size: 12.5px;
+  line-height: 1.35;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+.menu[hidden] {
+  display: none;
+}
+
+.menu .head {
+  padding: 5px 9px 3px;
+  opacity: 0.55;
+  font-size: 11px;
+}
+
+.menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menu button:hover {
+  background: rgba(3, 155, 229, 0.16);
+}
+
+.menu button.on {
+  color: #039be5;
+  font-weight: 600;
+}
+
+.menu button.dim {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.menu button.dim:hover {
+  background: transparent;
+}
+
+.menu .sep {
+  height: 1px;
+  margin: 5px 8px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
 /* ── 状态点 ──────────────────────────────────────────────────── */
 
 .dot {
