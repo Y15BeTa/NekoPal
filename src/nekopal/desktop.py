@@ -395,11 +395,30 @@ def reclaim_backend(settings: Settings) -> None:
         except Exception:  # noqa: BLE001
             continue
 
-    # 等它真的退（最多 5 秒 ✗）
-    for _ in range(50):
-        if not backend_alive("http://{}:{}".format(settings.host, port)):
+    # ⚠️ 等的必须是「**端口真的空出来**」✗，不能等「后端不再回答」✗ ——
+    #    那个要死的旧后端**早就不回答了**（它正在退出 ✗），于是等待会**提前结束** ✗
+    #    → 新旧两个一起抢端口 → 双双绑定失败 → **整个 App 白屏** ✗（真踩过 ✗）
+    def _port_free() -> bool:
+        try:
+            out2 = subprocess.run(
+                ["lsof", "-nP", "-t", "-iTCP:{}".format(port), "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout
+        except Exception:  # noqa: BLE001
+            return True
+        return not out2.strip()
+
+    for _ in range(60):  # 最多等 6 秒
+        if _port_free():
             return
         time.sleep(0.1)
+
+    print(
+        "⚠️ 端口 {} 还被占着，没等到空出来 —— 新后端可能起不来".format(port),
+        file=sys.stderr,
+    )
 
 
 def run_app(
@@ -437,6 +456,16 @@ def run_app(
         # 自检模式：仍然创建 WebView（页面会执行），但不显示窗口
         print("NekoPal {} · 外壳自检（窗口隐藏）· {}".format(__version__, url))
 
+    # 人物形象：跟主窗**一起开** ✗（后端已就绪，这里 spawn 不会卡住任何人 ✗）
+    # ⚠️ 别把这个挪到后端的 lifespan 里 ✗ —— 那会让后端启动卡死、整个 App 白屏 ✗（踩过）
+    pet: Optional[subprocess.Popen] = None
+    from nekopal import pet_manager
+
+    if not hidden and pet_manager.show_avatar_wanted():
+        pet = spawn_pet(settings)
+        if pet is not None:
+            print("角色窗口已拉起（关掉主窗会一起关）", flush=True)
+
     webview.create_window(
         WINDOW_TITLE,
         url,
@@ -454,6 +483,8 @@ def run_app(
             storage_path=str(settings.cache_dir / "webview"),
         )
     finally:
+        if pet is not None and pet.poll() is None:
+            pet.terminate()
         if child is not None and child.poll() is None:
             child.terminate()
 

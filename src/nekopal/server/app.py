@@ -22,14 +22,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await runtime.warmup()
-        # 角色窗口（桌宠）由**后端**负责生命周期 ✗ —— 主窗的「人物形象」开关说了算 ✗
-        from nekopal import pet_manager
-
-        pet_manager.ensure(pet_manager.show_avatar_wanted())
+        # ⚠️ **不要在这里拉起角色窗口** ✗ —— 踩过：在 lifespan 里 spawn 子进程
+        #    会把后端的启动卡住 ✗ → 后端永远不开始服务 ✗ → **整个 App 白屏** ✗。
+        #    角色窗口由 `run_app` 在后端就绪之后拉起 ✗（那边一直是好的 ✗），
+        #    主窗里切换开关时由 `PUT /api/ui` 调 `pet_manager` 处理 ✗。
         try:
             yield
         finally:
-            pet_manager.stop()
             await runtime.aclose()
 
     app = FastAPI(title="NekoPal", version=__version__, lifespan=lifespan)

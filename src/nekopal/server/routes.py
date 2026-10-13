@@ -642,9 +642,10 @@ def build_router(runtime: Runtime) -> APIRouter:
             raise _invalid("要传一个对象")
 
         merged = _save_ui(payload)
-        from nekopal import pet_manager
-
-        pet_manager.ensure(bool(merged.get("show_avatar", True)))
+        # ⚠️ 这里**故意不**去 spawn 角色窗口 ✗ —— 那只猫是 `run_app` 拉起的 ✗，
+        #    `pet_manager` 并不知道它 ✗ → 在这里 ensure 会**再拉一只** ✗（两只叠一起 ✗）。
+        #    所以：「取消勾选 → 角色窗自己退出」由角色窗轮询 `show_avatar` 完成 ✅；
+        #    「重新勾上 → 它回来」要等**下次开 App** ✗（已知限制，不装死 ✗）。
         return merged
 
     @router.get("/avatar")
