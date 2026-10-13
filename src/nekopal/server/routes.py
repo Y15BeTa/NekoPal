@@ -52,6 +52,9 @@ def _load_ui() -> dict:
         "cache_max_mb": 500,
         # 🌟 点击角色时，台词从哪来 ✗：`pool` 抽预生成的（快 ✅）/ `live` 每次现编（慢 ✗）
         "line_source": "pool",
+        #: 变调（半音）。**必须在 defaults 里** —— `_save_ui` 只保留这里认识的键，
+        #: 不加的话界面改了也存不下来（音色那个 bug 的同款）。
+        "pitch": 0.0,
         # 🌟 角色窗的「感觉型」开关 ✗ —— 都在主窗「设置」里，不该让人去编辑 json ✗
         "paw_cursor": True,   # 🐾 鼠标移到角色上变成小猫爪
         "gaze_follow": True,  # 眼睛和头看向光标
