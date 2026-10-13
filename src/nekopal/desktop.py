@@ -15,6 +15,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -456,17 +457,29 @@ def run_app(
         # 自检模式：仍然创建 WebView（页面会执行），但不显示窗口
         print("NekoPal {} · 外壳自检（窗口隐藏）· {}".format(__version__, url))
 
-    # 人物形象：跟主窗**一起开** ✗（后端已就绪，这里 spawn 不会卡住任何人 ✗）
-    # ⚠️ 别把这个挪到后端的 lifespan 里 ✗ —— 那会让后端启动卡死、整个 App 白屏 ✗（踩过）
-    pet: Optional[subprocess.Popen] = None
+    # 人物形象：跟主窗**一起开** ✗ —— 但**必须在主窗之后** ✗
+    # ⚠️ 踩过两次，都是"窗口创建之前干了别的事"：
+    #    ① 在后端 lifespan 里 spawn 子进程 → 后端启动卡死 → 整个 App 白屏 ✗
+    #    ② 在 create_window **之前** spawn 另一个 pywebview 子进程（角色窗 ✗）
+    #       → 主窗**白屏** ✗（后端一个请求都收不到 ✗）
+    #    ⇒ 所以改成**延迟线程**：等主窗真正起来之后再拉角色窗 ✅
     from nekopal import pet_manager
 
-    if not hidden and pet_manager.show_avatar_wanted():
-        pet = spawn_pet(settings)
-        if pet is not None:
+    pet_holder: dict = {"proc": None}
+
+    def _spawn_pet_later() -> None:
+        time.sleep(3.0)
+        if not pet_manager.show_avatar_wanted():
+            return
+        proc = spawn_pet(settings)
+        pet_holder["proc"] = proc
+        if proc is not None:
             print("角色窗口已拉起（关掉主窗会一起关）", flush=True)
 
-    webview.create_window(
+    if not hidden:
+        threading.Thread(target=_spawn_pet_later, daemon=True).start()
+
+    win = webview.create_window(
         WINDOW_TITLE,
         url,
         width=width,
@@ -477,14 +490,38 @@ def run_app(
         zoomable=True,
     )
 
+    # 🔎 主窗自检：页面加载完之后问它「你渲染出什么了」✗
+    #    为什么要它说话：pywebview 窗口**没有开发者工具** ✗，
+    #    "白屏"到底是「没加载」还是「加载了但报错」✗，只能这么看 ✗。
+    def _probe_page() -> None:
+        try:
+            title = win.evaluate_js("document.title")
+            text = win.evaluate_js("(document.body.innerText||'').replace(/\\s+/g,' ').slice(0,70)")
+            js = win.evaluate_js("typeof initAvatarPickers")
+            print(
+                "主窗自检：title={!r} · 首屏文本={!r} · initAvatarPickers={}".format(
+                    title, text, js
+                ),
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print("主窗自检失败 ✗ {}".format(exc), flush=True)
+
+    events = getattr(win, "events", None)
+    if events is not None and hasattr(events, "loaded"):
+        events.loaded += _probe_page
+    else:  # noqa: BLE001 - 版本不同就算了
+        print("（这个 pywebview 版本没有 window.events.loaded ✗）", flush=True)
+
     try:
         webview.start(
             private_mode=False,  # 保留本地存储（记住音色/语速等选择）
             storage_path=str(settings.cache_dir / "webview"),
         )
     finally:
-        if pet is not None and pet.poll() is None:
-            pet.terminate()
+        proc = pet_holder.get("proc")
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
         if child is not None and child.poll() is None:
             child.terminate()
 

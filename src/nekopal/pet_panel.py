@@ -239,6 +239,8 @@ def run(
             # 右键菜单现在开着吗 / 上一帧鼠标是不是按着的（做边沿检测 ✗）
             self._menu_open = False
             self._was_down = False
+            # 鼠标是什么时候离开窗口的（菜单开着时用 —— 见 _tick ✗）
+            self._left_at: Optional[float] = None
             return self
 
         def userContentController_didReceiveScriptMessage_(  # noqa: N802
@@ -577,6 +579,21 @@ def run(
                     _call_js(
                         "window.__nekopalCloseMenu && window.__nekopalCloseMenu()"
                     )
+                    bridge._left_at = None
+                else:
+                    # ⚠️ **不能只靠按键** ✗：轮询只有 12.5Hz，**快点一下**
+                    #    （按下+松开都落在 80ms 内）会被漏掉 ✗（用户报的正是这个 ✗）。
+                    #    所以补一条更可靠的路：**鼠标离开窗口超过 0.6 秒**就收菜单 ✅
+                    #    （0.6 秒够你"甩出去又回来" ✗，不至于误关 ✗）
+                    now2 = time.monotonic()
+                    if bridge._left_at is None:
+                        bridge._left_at = now2
+                    elif now2 - bridge._left_at > 0.6:
+                        print("置顶小条：鼠标离开窗口 → 收起右键菜单", flush=True)
+                        _call_js(
+                            "window.__nekopalCloseMenu && window.__nekopalCloseMenu()"
+                        )
+                        bridge._left_at = None
                 bridge._was_down = down
 
                 # 节流诊断（每秒一次 ✗）：万一关不掉，这行会说明是哪个条件不对 ✗
@@ -590,6 +607,7 @@ def run(
                     )
             else:
                 bridge._was_down = False
+                bridge._left_at = None
 
             # 顺手把窗口位置记下来（拖动后 1 秒落一次盘，别每帧都写文件）
             now = time.monotonic()
