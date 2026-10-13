@@ -15,6 +15,10 @@
     窗口本身是全透明的，且原生侧会做「精确命中」：
     只有 `.character` 和 `.actions` 这两个矩形里能点，其他地方**点穿**到桌面。
     （这两个矩形由 character.js 报给原生，见 reportHotRects）
+
+    图标用**内联 SVG**，不用 ⏮⏯ 这类符号：
+    那些字符在 WebKit 里会走**彩色 emoji 字体**，在浅色毛玻璃上糊成一团、
+    根本看不出是什么 ✗（用户实测反馈）。SVG 笔锋锐利、粗细可控 ✅
   -->
   <div class="stage">
     <!-- 角色本体：唯一可拖、可点的"实体" -->
@@ -22,14 +26,44 @@
       <div class="avatar">🐱</div>
     </div>
 
-    <!-- 按钮列：平时 opacity:0，悬停才淡入（半透明毛玻璃） -->
+    <!-- 按钮列：平时 opacity:0，鼠标移到角色上才浮出来 -->
     <div class="actions">
-      <button id="prev" title="上一句">⏮</button>
-      <button id="toggle" title="暂停 / 继续">⏯</button>
-      <button id="next" title="下一句">⏭</button>
+      <button id="prev" title="上一句" aria-label="上一句">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 6v12" />
+          <path d="M18 6.5 9.5 12 18 17.5Z" />
+        </svg>
+      </button>
+
+      <button id="toggle" title="暂停 / 继续" aria-label="暂停或继续">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5.5 7.5 13 12 5.5 16.5Z" />
+          <path d="M17 7.5v9" />
+          <path d="M20.5 7.5v9" />
+        </svg>
+      </button>
+
+      <button id="next" title="下一句" aria-label="下一句">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6.5 14.5 12 6 17.5Z" />
+          <path d="M17 6v12" />
+        </svg>
+      </button>
+
       <span class="sep"></span>
-      <button id="stop" title="停止">⏹</button>
-      <button id="close" title="关掉猫伴">✕</button>
+
+      <button id="stop" title="停止" aria-label="停止">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="7" y="7" width="10" height="10" rx="2" />
+        </svg>
+      </button>
+
+      <button id="close" title="关掉猫伴" aria-label="关掉猫伴">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 8l8 8" />
+          <path d="M16 8l-8 8" />
+        </svg>
+      </button>
     </div>
 
     <!-- 跟读窗连没连着（绿=连上，灰=没连） -->

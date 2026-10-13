@@ -48,6 +48,48 @@ from typing import Optional
 __all__ = ["available", "run"]
 
 
+def window_relative_point(cursor, frame, screen_height) -> tuple:
+    """把「鼠标的屏幕坐标」换算成「窗口内坐标」（原点**左上**，与网页一致）。
+
+    ⚠️ 这里是全项目**最容易算错**的一处，所以单独抽成纯函数并配单测：
+
+    - ``CGEventGetLocation`` 给的鼠标位置：原点在**左上**（y 往下增）
+    - ``panel.frame()`` 给的窗口位置：原点在**左下**（y 往上增）
+
+    两者**直接相减**会差**一整个屏高** → 判定"鼠标从来不在角色身上" →
+    窗口全程点穿 → **整个窗口点不动、像死机** ✗（真踩过，用户报的）。
+
+    正解：先把鼠标 y 翻成 AppKit 口径（``screen_height - cursor_y``），
+    再用窗口**顶边**（``win_y + win_h``）减它。
+
+    :param cursor: ``(x, y)``，原点左上
+    :param frame: ``(x, y, w, h)``，原点左下（``panel.frame()`` 的口径）
+    :param screen_height: 主屏高度（AppKit 点）
+    :return: ``(rel_x, rel_y)``，原点左上（和网页 ``getBoundingClientRect`` 一致）
+    """
+
+    cursor_x, cursor_y = cursor
+    win_x, win_y, _win_w, win_h = frame
+    return (
+        cursor_x - win_x,
+        (win_y + win_h) - (screen_height - cursor_y),
+    )
+
+
+def is_over_any(rects, point, slack: float = 6.0) -> bool:
+    """点是否落在任意一个矩形里（都用「窗口内坐标、原点左上」）。
+
+    ``slack`` 是边缘容差：鼠标贴着边界时判定会来回抖，留几像素就不抖了。
+    """
+
+    px, py = point
+    return any(
+        (r["x"] - slack) <= px <= (r["x"] + r["w"] + slack)
+        and (r["y"] - slack) <= py <= (r["y"] + r["h"] + slack)
+        for r in rects
+    )
+
+
 def _load_origin(state_path: Optional[str]) -> Optional[tuple]:
     """读回上次拖到的窗口位置；没有 / 坏了都返回 None（用默认角落）。
 
@@ -387,22 +429,20 @@ def run(
                     # 网页还没报到时先当"能点"处理，免得它自己都点不了
                     inside = True
                     if rects:
-                        # ⚠️ 这里有两个**原点不同**的坐标系，极易搞错：
-                        #   · CGEventGetLocation 给的鼠标位置：原点在**左上**
-                        #   · panel.frame() 给的窗口位置：原点在**左下**
-                        # 我第一版就把两者直接相减 → rel_y 永远差一整个屏高 →
-                        # 判定"鼠标从来不在猫身上"→ 窗口全程点穿 → **像死机** ✗
-                        # 正解：先把鼠标的 y 翻成 AppKit 口径（screen_h - y），
-                        # 再用窗口**顶边**减它，才等于"从窗口顶边往下量"。
+                        # 坐标换算与命中判断都在**纯函数**里（有单测）——
+                        # 这两步以前内联在这儿，算错了也不报错，只是"窗口点不动"✗
                         screen_h = NSScreen.mainScreen().frame().size.height
-                        rel_x = loc.x - frame.origin.x
-                        rel_y = (frame.origin.y + frame.size.height) - (screen_h - loc.y)
-                        slack = 6.0  # 边缘留点容差，免得反复抖动
-                        inside = any(
-                            (r["x"] - slack) <= rel_x <= (r["x"] + r["w"] + slack)
-                            and (r["y"] - slack) <= rel_y <= (r["y"] + r["h"] + slack)
-                            for r in rects
+                        rel_x, rel_y = window_relative_point(
+                            (loc.x, loc.y),
+                            (
+                                frame.origin.x,
+                                frame.origin.y,
+                                frame.size.width,
+                                frame.size.height,
+                            ),
+                            screen_h,
                         )
+                        inside = is_over_any(rects, (rel_x, rel_y))
                         if debug_once[0]:
                             debug_once[0] = False
                             print(
