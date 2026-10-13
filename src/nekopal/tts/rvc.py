@@ -158,10 +158,17 @@ class RvcBackend:
         # ① 先用基础音色把文本读出来
         #    音色包可以用 `rvc.rate` 调 **base 的语速** —— 这是「慵懒」的主要旋钮：
         #    RVC 保留时间轴，所以源慢下来，最终输出也跟着慢（语气就松下来了）。
+        #
+        # ⚠️ **基础音必须把 pitch 清成 0**（2026-10-14 修）：
+        #    变调应该由**变声那一级**独家负责（RVC 的 `--pitch` 单位是半音）；
+        #    而基础音后端（edge）把 pitch 当 **Hz** 用（`+pitch×50Hz`，非常猛），
+        #    两边一叠加 —— 界面上调 1 格，实测跳了 **6~14 个半音**（试听 8 那份量出来的）。
+        #    所以这里只保留语速，pitch 一律归 0。
         base_options = options
         pack_rate = getattr(pack, "rvc_rate", None)
-        if pack_rate and abs(float(pack_rate) - options.rate) > 1e-3:
-            base_options = replace(options, rate=float(pack_rate))
+        want_rate = float(pack_rate) if pack_rate else options.rate
+        if abs(want_rate - options.rate) > 1e-3 or abs(options.pitch) > 1e-3:
+            base_options = replace(options, rate=want_rate, pitch=0.0)
         base_result = await self._registry.synth(base_voice, text, base_options)
 
         # ② 再跑变声

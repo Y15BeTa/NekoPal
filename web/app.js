@@ -1014,6 +1014,8 @@ async function loadSettings(force = false) {
   document.getElementById('setScroll').value = s.auto_scroll || 'center';
   document.getElementById('setPrefetch').value = s.prefetch ?? 3;
   document.getElementById('setCacheMb').value = s.cache_max_mb ?? 500;
+  const pitchEl = document.getElementById('setPitch');
+  if (pitchEl) pitchEl.value = s.pitch ?? 0;
   const dir = document.getElementById('expDir');
   if (dir && s.export_dir) dir.textContent = s.export_dir;
 
@@ -1049,6 +1051,7 @@ function initSettingsPanel() {
     setScroll: { key: 'auto_scroll', read: (el) => el.value, ok: '自动滚动已' },
     setPrefetch: { key: 'prefetch', read: (el) => parseInt(el.value, 10) || 0, ok: '预取句数已' },
     setCacheMb: { key: 'cache_max_mb', read: (el) => parseInt(el.value, 10) || 500, ok: '缓存上限已' },
+    setPitch: { key: 'pitch', read: (el) => parseFloat(el.value) || 0, ok: '音高已' },
   };
 
   for (const [id, cfg] of Object.entries(map)) {

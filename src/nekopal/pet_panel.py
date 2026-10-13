@@ -498,7 +498,15 @@ def run(
     # 因为这是个**非激活**的 accessory app 面板，网页设的光标到不了系统。
     # 只能由原生 `NSCursor.set()` 来设。反正这个 tick 每 80ms 就在判
     # 「鼠标在不在身上」，顺手切光标不额外花钱。
-    paw = {"cursor": None, "ok": None, "wanted": None, "checked": -9.0}
+    paw = {
+        "cursor": None, "ok": None, "wanted": None, "checked": -9.0,
+        "rects": None, "tracked": False, "delegate": None,
+    }
+
+    def _make_paw_owner():
+        """建那个 cursorUpdate 的接收者（要**留引用**，否则会被 GC 掉 ✗）。"""
+
+        return _PawCursorOwner.alloc().init()
 
     def _paw_wanted() -> bool:
         """要不要猫爪（每 ~2 秒读一次 ui.json，别每帧读文件）。"""
@@ -523,6 +531,13 @@ def run(
             if paw["cursor"] is None and cursor_image and Path(cursor_image).is_file():
                 img = NSImage.alloc().initWithContentsOfFile_(str(cursor_image))
                 if img is not None:
+                    print(
+                        "置顶小条：猫爪图 {}×{} 合法={} reps={}".format(
+                            img.size().width, img.size().height, img.isValid(),
+                            img.representations().__len__(),
+                        ),
+                        flush=True,
+                    )
                     # 图是 64px，按 **32 点**显示 —— 高分屏才锐利
                     img.setSize_(NSMakeSize(32.0, 32.0))
                     # 热点 (16,26)：图的上方中间（AppKit 原点在**左下**，32-6=26）
@@ -531,18 +546,122 @@ def run(
                     )
                     print("置顶小条：猫爪光标已加载 ✅", flush=True)
 
-            want = inside and _paw_wanted() and paw["cursor"] is not None
+            enabled = _paw_wanted()
+            # 热区变了（按钮浮现 / 菜单收起）→ 重新登记光标区域
+            # 给 owner 用：它靠这个判断"现在在不在她身上"
+            paw["inside"] = bool(inside)
+            # 跟踪区域只装一次（光标加载好之后）
+            if enabled and paw["cursor"] is not None:
+                _install_paw_tracking()
+            want = inside and enabled and paw["cursor"] is not None
             if want:
                 # 每次 tick 都重申一遍 —— 别的程序会顺手把光标抢走
                 paw["cursor"].set()
             elif paw["ok"]:
                 # 只在"离开"那一次还原成箭头（离开就点穿了，不该再管桌面光标）
                 NSCursor.arrowCursor().set()
+            if want != paw["ok"]:
+                # 状态翻转时说清楚**每个条件**分别是真是假 —— 好定位卡在哪一步
+                print(
+                    "置顶小条：猫爪光标 {}（在可点区域={} · 开关={} · 已加载={}）".format(
+                        "开" if want else "关", inside, enabled, paw["cursor"] is not None
+                    ),
+                    flush=True,
+                )
             paw["ok"] = want
         except Exception as exc:  # noqa: BLE001 - 光标失败绝不能让窗口炸掉
             if paw["ok"] is None:
                 paw["ok"] = False
                 print("置顶小条：猫爪光标不可用（{}）—— 用系统箭头".format(exc), flush=True)
+
+    class _PawCursorOwner(NSObject):
+        """光标在「她身上」时把它换成猫爪。
+
+        ⚠️ 为什么非要走 AppKit 这套钩子 ✗：
+        2026-10-14 实测 —— `NSCursor.set()`（每 80ms 一次）和
+        `addCursorRect:forCursor:` 在这个**非激活的 accessory 面板**上**都不生效**：
+        日志证明条件全对、光标也加载成功，屏幕上却始终是箭头。
+        `NSTrackingActiveAlways` 是 AppKit 专门为「App 不是前台也要改光标」提供的开关。
+
+        ⚠️ 为什么**整窗一个区域**而不是"每块热区一个" ✗：
+        逐矩形登记要靠 `removeAllTrackingAreas`（pyobjc 没暴露 ✗）来清理，
+        而且热区会随按钮浮现 / 菜单开合变化 ✗。
+        改成整窗一个区域 + **每次鼠标移动都判一次** —— 反正 `inside`
+        原生每 80ms 已经算好了，直接拿来用 ✅
+        """
+
+        def _apply(self):
+            try:
+                from AppKit import NSCursor
+
+                want_paw = bool(
+                    paw.get("inside") and paw["cursor"] is not None and _paw_wanted()
+                )
+                was = paw.get("applied")
+                if want_paw:
+                    paw["cursor"].set()
+                elif was:
+                    # ⚠️ **只在"刚才还是猫爪"那一次还原** ✗
+                    #    每帧都设箭头的话，会把按钮上的 CSS 光标（小手）也一起覆盖掉 ✗
+                    NSCursor.arrowCursor().set()
+                if want_paw != was:
+                    paw["applied"] = want_paw
+                    print(
+                        "置顶小条：cursorUpdate → 设成 {}".format("猫爪 🐾" if want_paw else "箭头"),
+                        flush=True,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                if not paw.get("apply_err"):
+                    paw["apply_err"] = True
+                    print("置顶小条：设光标出错（{}）".format(exc), flush=True)
+
+        def cursorUpdate_(self, _event):  # noqa: N802
+            self._apply()
+
+        def mouseMoved_(self, _event):  # noqa: N802
+            self._apply()
+
+        def mouseExited_(self, _event):  # noqa: N802
+            self._apply()
+
+    # ⚠️ 必须留引用：跟踪区域的 owner 是**弱引用**，被 GC 掉就再也不回调了
+    paw["delegate"] = _PawCursorOwner.alloc().init()
+
+    def _install_paw_tracking() -> None:
+        """整窗装**一个**跟踪区域，让 `cursorUpdate:` / `mouseMoved:` 能被叫到。
+
+        只装一次；`NSTrackingInVisibleRect` 会让它自动跟着窗口尺寸走。
+        """
+
+        if paw["tracked"]:
+            return
+        try:
+            from AppKit import (
+                NSMakeRect,
+                NSTrackingActiveAlways,
+                NSTrackingArea,
+                NSTrackingCursorUpdate,
+                NSTrackingInVisibleRect,
+                NSTrackingMouseEnteredAndExited,
+                NSTrackingMouseMoved,
+            )
+
+            area = NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+                NSMakeRect(0.0, 0.0, 1.0, 1.0),
+                NSTrackingCursorUpdate
+                | NSTrackingMouseMoved
+                | NSTrackingMouseEnteredAndExited
+                | NSTrackingActiveAlways
+                | NSTrackingInVisibleRect,
+                paw["delegate"],
+                None,
+            )
+            view.addTrackingArea_(area)
+            paw["tracked"] = True
+            print("置顶小条：猫爪跟踪区域已装好 ✅", flush=True)
+        except Exception as exc:  # noqa: BLE001 - 装不上不能让窗口炸掉
+            paw["tracked"] = True  # 别每帧重试刷屏
+            print("置顶小条：装猫爪跟踪区域失败（{}）".format(exc), flush=True)
 
     def _tick(_timer):
         # ⚠️ 计时器里**绝对不能漏异常**：pyobjc 会把 ObjC 回调里的 Python 异常

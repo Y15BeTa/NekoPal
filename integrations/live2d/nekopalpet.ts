@@ -440,7 +440,8 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
 
   // 口型要动的就是 LipSync 组（= ParamMouthOpenY ✗），数值由外部喂进来 ✗
   const mouthIds = lipIds;
-  let mouthOpen = 0;
+  let mouthOpen = 0;    // 实际喂给模型的张嘴量（带包络平滑）
+  let mouthTarget = 0;  // 外部（口型同步）刚送来的瞬时值
 
   // ⚠️ 必须给每个 motion 调 setEffectIds：CubismMotion 的 _eyeBlinkParameterIds
   //    默认是 **null**，而 updateParameters 里直接 `.length` → 一播就抛错 ✗
@@ -452,6 +453,19 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     if (typeof setter === 'function') setter.call(m, eyeIds, lipIds);
   }
   log('特效 id：眨眼 ' + eyeIds.length + ' 个 · 口型 ' + lipIds.length + ' 个');
+  // 🔎 口型的**量程**：如果这个范围很小（比如 0~0.1），那"看不出张嘴"就是必然的 ——
+  //    喂 1.0 进去也只动一丁点。没有这个数字，根本分不清是"没喂到"还是"动不了"。
+  for (const id of lipIds) {
+    try {
+      const idx = model.getParameterIndex(id as never);
+      log(
+        '口型参数 ' + String(id) +
+        ' 范围 ' + Number(model.getParameterMinimumValue(idx)).toFixed(3) +
+        ' ~ ' + Number(model.getParameterMaximumValue(idx)).toFixed(3) +
+        ' · 默认 ' + Number(model.getParameterDefaultValue(idx)).toFixed(3)
+      );
+    } catch (err) { /* 忽略 */ }
+  }
 
   let blinkLeft = 0;
   let blinkWait = 1.5 + Math.random() * 3;
@@ -607,7 +621,14 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
       updateBlink(dt);
       // 视线：也放最后 —— 同样要盖过呼吸/物理，但只**混一点**进去 ✗
       updateGaze(dt);
-      // 口型：嘴的张合程度由外部（口型同步）驱动 ✗
+      // 口型：嘴的张合程度由外部（口型同步）驱动
+      // ⚠️ 不能把瞬时音量直接喂进去：原始 RMS 是一串尖刺，看起来只是"嘴在抖"，
+      //    根本不像在说话。真人口型是**快起、慢落**——张嘴跟得快、闭嘴慢慢合。
+      if (mouthTarget > mouthOpen) {
+        mouthOpen += (mouthTarget - mouthOpen) * Math.min(1, dt * 45); // 快起
+      } else {
+        mouthOpen += (mouthTarget - mouthOpen) * Math.min(1, dt * 11); // 慢落
+      }
       if (mouthIds.length) {
         for (const id of mouthIds) model.setParameterValueById(id as never, mouthOpen);
       }
@@ -648,7 +669,7 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
       return true;
     },
     setMouth: (open: number) => {
-      mouthOpen = Math.max(0, Math.min(1, open));
+      mouthTarget = Math.max(0, Math.min(1, open));
     },
     /**
      * 视线跟随：传**归一化**的光标位置 ✗（-1..1，+x 右、+y 下 ✗）。

@@ -83,6 +83,9 @@ class Settings:
 
     clean: List[str] = field(default_factory=lambda: list(DEFAULT_CLEAN))
     rate: float = 1.0
+    #: 变调（半音 ✗）。**RVC 后端用** —— 走 `options.pitch` 进缓存键 ✗，
+    #: 所以改了它旧缓存会自然失效 ✅
+    pitch: float = 0.0
     auto_scroll: str = "center"
 
     # 预合成队列的前瞻段数（设计文档 5.4）
@@ -119,6 +122,7 @@ class Settings:
             "cache_max_mb": self.cache_max_mb,
             "clean": list(self.clean),
             "rate": self.rate,
+            "pitch": self.pitch,
             "auto_scroll": self.auto_scroll,
             "prefetch": self.prefetch,
             "follow": self.follow,
@@ -142,6 +146,7 @@ def load_settings() -> Settings:
     s.cache_dir = Path(_env("NEKOPAL_CACHE_DIR", str(s.cache_dir)))
     s.cache_max_mb = _env_int("NEKOPAL_CACHE_MAX_MB", s.cache_max_mb)
     s.rate = _env_float("NEKOPAL_RATE", s.rate)
+    s.pitch = _env_float("NEKOPAL_PITCH", s.pitch)
     s.prefetch = max(1, _env_int("NEKOPAL_PREFETCH", s.prefetch))
     s.dedupe_window = _env_float("NEKOPAL_DEDUPE_WINDOW", s.dedupe_window)
     s.follow = _env("NEKOPAL_FOLLOW", "1" if s.follow else "0").strip().lower() not in (

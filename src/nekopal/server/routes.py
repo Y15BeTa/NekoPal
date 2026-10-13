@@ -176,6 +176,20 @@ def build_router(runtime: Runtime) -> APIRouter:
             raise _invalid("请求体不是合法 JSON") from exc
 
     # -- 元信息 ----------------------------------------------------------
+    def _synth_options(raw) -> SynthOptions:
+        """把请求里的 `options` 转成 `SynthOptions`。
+
+        ⚠️ 没写 `pitch` 就用**全局设置**（`settings.pitch`）——
+        以前音高只写死在音色包的命令模板里，**缓存键看不到它** ✗：
+        改了音高，旧音频照样被当成命中复用 ✗（2026-10-14 踩到 ✗）。
+        走 `options.pitch` 之后，它会进 `cache_part()` ✗，改了就自然失效 ✅
+        """
+
+        data = dict(raw or {})
+        if "pitch" not in data:
+            data["pitch"] = runtime.settings.pitch
+        return SynthOptions.from_dict(data)
+
     @router.get("/health")
     async def health() -> dict:
         return {
@@ -292,6 +306,9 @@ def build_router(runtime: Runtime) -> APIRouter:
             _save_ui({"voice": settings.default_voice})
         if isinstance(data.get("rate"), (int, float)):
             settings.rate = float(data["rate"])
+        if isinstance(data.get("pitch"), (int, float)):
+            # 半音，限制在 ±12 之间（再大音色就崩了）
+            settings.pitch = max(-12.0, min(12.0, float(data["pitch"])))
         if isinstance(data.get("clean"), list):
             settings.clean = [str(item) for item in data["clean"]]
         if isinstance(data.get("auto_scroll"), str):
@@ -310,7 +327,7 @@ def build_router(runtime: Runtime) -> APIRouter:
         _save_ui(
             {
                 k: getattr(settings, k)
-                for k in ("auto_read", "follow", "prefetch", "cache_max_mb", "rate", "auto_scroll")
+                for k in ("auto_read", "follow", "prefetch", "cache_max_mb", "rate", "auto_scroll", "pitch")
                 if k in data
             }
         )
@@ -376,7 +393,7 @@ def build_router(runtime: Runtime) -> APIRouter:
             else None
         )
         req.voice = runtime.tts.resolve_voice_id(req.voice, fallback=fallback)
-        options = SynthOptions.from_dict(req.options)
+        options = _synth_options(req.options)
         sentences = prepare_sentences(req.text, req.options, runtime.settings.clean)
         if not sentences:
             raise HTTPException(
@@ -609,7 +626,7 @@ def build_router(runtime: Runtime) -> APIRouter:
                 str(data.get("voice") or settings.default_voice),
                 fallback=settings.fallback_voice,
             )
-            options = SynthOptions.from_dict(data.get("options"))
+            options = _synth_options(data.get("options"))
             sentences = prepare_sentences(text, {}, settings.clean)
             if not sentences:
                 raise HTTPException(
@@ -991,7 +1008,7 @@ def build_router(runtime: Runtime) -> APIRouter:
             raise _invalid("text 不能为空")
         text = text[:200]
 
-        options = SynthOptions.from_dict({})
+        options = _synth_options({})
         sentences = prepare_sentences(text, {}, runtime.settings.clean)
         if not sentences:
             raise _invalid("清洗后没有可读的内容")
@@ -1161,7 +1178,7 @@ def build_router(runtime: Runtime) -> APIRouter:
             generated = {"text": random.choice(_voice_lines(character)), "model": "(static)"}
 
         text = str(generated["text"])[:200]
-        options = SynthOptions.from_dict({})
+        options = _synth_options({})
         sentences = prepare_sentences(text, {}, runtime.settings.clean)
         if not sentences:
             raise _invalid("清洗后没有可读的内容")

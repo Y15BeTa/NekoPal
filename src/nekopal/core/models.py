@@ -21,7 +21,10 @@ LICENSE_LEVELS = ("official", "self-recorded", "licensed", "public-domain", "uno
 #: v2（2026-10-13）：变声后端开始**透传 base 音色的词级时间戳**，
 #: 并且采样率改为从 WAV 头读取（原来写死 24000，实测真实 RVC 输出是 48000）。
 #: v1 存下来的 `words` 恒为空 → 不升版本的话，词级高亮"改了也看不出效果"。
-CACHE_VERSION = "2"
+#: 改这个 = **所有旧缓存作废** ✗。什么时候该改：音色包/提示词变了但
+#: 缓存键看不出来的时候（2026-10-14：音高从音色包的命令模板改成走 `options.pitch` ✗，
+#: 旧缓存里全是旧音高 ✗）。
+CACHE_VERSION = "4"
 
 
 @dataclass(frozen=True)
