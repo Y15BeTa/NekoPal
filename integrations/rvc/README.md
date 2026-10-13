@@ -151,3 +151,64 @@ export NEKOPAL_RVC_ENDPOINT=http://127.0.0.1:7899
 
 - 变声**不产出词级时间戳** → 高亮自动降级为**句级**（这是正常的）。
 - 队列深度可调：`NEKOPAL_PREFETCH`（默认 3）；变声场景建议调到 5–6。
+
+---
+
+## 八、音质调参（2026-10-13 实测补充）
+
+### 8.1 变调是「像不像」的第一杠杆 ⭐⭐⭐
+
+RVC **保留"源"的音高**，只换音色。所以 base 比目标低 → 输出就偏低（听起来"闷、偏男"）。
+
+**实测**：中文晓晓 → 要楽奈，**升 2 个半音**明显更贴，而且原来那种"忽然冒出来的很低的音"也没了。
+
+### 8.2 三件「气声」旋钮 ⭐⭐
+
+想调「有点虚 / 太实 / 想要气音」，主要靠这三个（**都已在 `convert_cli.py` 暴露**）：
+
+| 参数 | 默认 | 怎么调 | 对应 RVC 参数 |
+| --- | --- | --- | --- |
+| `--breath-protection` | `0.33` | 调大 → 更保护气声段 | `consonant_breath_protection` |
+| `--envelope-ratio` | `0.25` | 调大 → 更保留**源**的气声起伏（**最有效的一个**） | `envelope_ratio` |
+| `--respiration-filter` | `3` | **调小** → 保留更多呼吸细节 | `respiration_median_filtering` |
+
+用法：写进音色包的 `rvc.command`（覆盖全局命令），例如：
+
+```yaml
+rvc:
+  command: [… --pitch 2 --breath-protection 0.6 --envelope-ratio 0.6 --respiration-filter 1 …]
+```
+
+### 8.3 ⚠️ `harvest` / `rmvpe` 需要 ffmpeg
+
+这两个音高提取算法比 `pm` 准得多，但在 `infer_rvc_python` 里**只吃文件路径**，
+而"按路径读音频"又要求 ffmpeg —— 本机没装，所以只有 `pm` 可用：
+
+```
+ValueError: Harvest not support from array
+RuntimeError: Failed to load audio: … No such file or directory: 'ffmpeg'
+```
+
+> 我们为了让变声**不依赖 ffmpeg**，是**传数组**进去的（见本文件开头的说明）——
+> 这就是拿不到 harvest 的原因。想用：`brew install ffmpeg`（一次安装，几百 MB）。
+
+### 8.4 反直觉但重要：**模型类型决定上限** ✗
+
+社区模型的 tags 能看出它是拿什么数据训的。例如：
+
+```
+tags: [rvc, voice-conversion, singing-voice-conversion]      ← 「歌声」模型
+```
+
+用**歌声**模型念**说话**文本，音高曲线天然不匹配
+（歌声是稳定的音高，说话是连续滑动的）——
+**参数只能改善、不能消除**。想要更像，得换**语音（speech）版**模型。
+
+### 8.5 快速 A/B 的做法（这次就是这么找出最优参数的）
+
+1. 用 `nekopal export` 生成一份 base 音频（同一个句子）
+2. 固定其它参数，只改一个，各生成一份
+3. 文件名里写清参数（如 `B6-全开气声-0.6+0.6+1.wav`），丢进同一个文件夹
+4. 在访达里挨个听 → 挑最优 → 写进 `rvc.command`
+
+> 💡 每份只要几秒（走常驻服务），所以一次试 6–8 组完全不心疼。
