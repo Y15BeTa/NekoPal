@@ -28,6 +28,8 @@ import { CubismEyeBlink } from './effect/cubismeyeblink';
 import { CubismBreath, BreathParameterData } from './effect/cubismbreath';
 import { CubismBreathUpdater } from './motion/cubismbreathupdater';
 import { CubismEyeBlinkUpdater } from './motion/cubismeyeblinkupdater';
+import { CubismMotion } from './motion/cubismmotion';
+import { CubismMotionManager } from './motion/cubismmotionmanager';
 import { CubismPhysicsUpdater } from './motion/cubismphysicsupdater';
 import { CubismPoseUpdater } from './motion/cubismposeupdater';
 import { CubismUpdateScheduler } from './motion/cubismupdatescheduler';
@@ -50,8 +52,13 @@ export interface MountOptions {
 export interface PetHandle {
   width: number;
   height: number;
+  /** 点一下角色时调它 —— 随机播一个非待机动作 */
+  playReaction(): boolean;
   destroy(): void;
 }
+
+/** 模型在「逻辑屏幕」里占的高度比例（1 = 恰好填满）。调这个就能改大小。 */
+const FIT = 0.95;
 
 /**
  * 继承一下 `CubismUserModel`。
@@ -172,8 +179,13 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
   //    而且眼眨的构造是 (motionUpdated 回调, eyeBlink)，不是 (eyeBlink, model) ✗
   const scheduler = new CubismUpdateScheduler();
 
-  const eyeBlink = CubismEyeBlink.create(setting);
-  scheduler.addUpdatableList(new CubismEyeBlinkUpdater(() => false, eyeBlink));
+  // 动作有没有在播 —— 眼眨要靠它决定"别在动的时候眨眼"（官方做法）
+  let motionUpdated = false;
+
+  // 眼眨：这个形象虽然报了 2 个参数，但 CubismEyeBlink 内部还是拿到 null id，
+  // 一跑就在 updater 里抛错、**把整个帧循环带停** ✗。它只是装饰，先不挂 ✗
+  // （真想要的话得去查 Groups/EyeBlink 的 Ids 写法，属于后面的事）
+  log('眨眼：跳过（该形象的 Groups/EyeBlink 解析不出 id ✗）');
 
   // ⚠️ 参数 id 必须是 CubismFramework.getIdManager().getId(...) 的产物，
   //    不能直接塞字符串 —— 否则呼吸完全不生效（而且不报错 ✗）
@@ -214,60 +226,150 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     }
   }
 
-  // ── ⑥ 视图矩阵 ──────────────────────────────────────────────────────
-  // ⚠️ 要用 **CubismViewMatrix**（setScreenRect 在它身上 ✗ CubismMatrix44 没有）
-  const ratio = canvas.width / canvas.height;
+  // ── ⑥ 视图矩阵 + 模型缩放 ────────────────────────────────────────────
+  // 两个矩阵各管一件事，别混：
+  //   · view 决定「逻辑屏幕有多大」—— 它的宽高比必须**等于 canvas 的**，
+  //     否则整个画面会被拉扁（这就是"太扁"的根源 ✗）
+  //   · modelMatrix 决定「模型在逻辑屏幕里占多大」—— 用 setHeight 让它**填满高度**
+  const canvasAspect = canvas.width / canvas.height;
   const view = new CubismViewMatrix();
-  view.setScreenRect(-ratio, ratio, -1.0, 1.0);
+  view.setScreenRect(-canvasAspect, canvasAspect, -1.0, 1.0);
 
+  // ⚠️ 不用 setupFromLayout：它按 model3.json 里那个 Layout 盒子来摆，
+  //    盒子的宽高比和窗口未必一致，会引入额外的拉伸 ✗
   const modelMatrix = new CubismModelMatrix(
     model.getCanvasWidth(),
     model.getCanvasHeight(),
   );
-  if (setting.getLayout) {
-    modelMatrix.setupFromLayout(setting.getLayout());
+  modelMatrix.setHeight(2.0 * FIT); // 逻辑高度是 -1..1 共 2
+  log(
+    '缩放：模型画布 ' + model.getCanvasWidth() + '×' + model.getCanvasHeight() +
+      ' · canvas 宽高比 ' + canvasAspect.toFixed(3) +
+      ' · 模型宽高比 ' + (model.getCanvasWidth() / model.getCanvasHeight()).toFixed(3) +
+      ' · 填充 ' + FIT,
+  );
+
+  // ── ⑦ 动作（素材都在模型里：这个形象有 246 个）───────────────────────
+  // ⚠️ 整段包 try/catch：动作加载失败**绝不能**影响画面 ✗
+  //    （踩过：一句 setFadeIn 写错，整个模型就挂不上了）
+  const motionManager = new CubismMotionManager();
+  const motions = new Map<string, CubismMotion>();
+  const groups: string[] = [];
+
+  try {
+    for (let g = 0; g < setting.getMotionGroupCount(); g++) {
+      const group = setting.getMotionGroupName(g);
+      groups.push(group);
+      for (let i = 0; i < setting.getMotionCount(group); i++) {
+        const file = setting.getMotionFileName(group, i);
+        if (!file) continue;
+        const buf = await fetchBuffer(joinUrl(dir, file));
+        if (!buf) continue;
+        // loadMotion 要一串参数；group/index/setting 传对，动作里的曲线 id 才解析得准
+        const motion = user.loadMotion(
+          buf,
+          buf.byteLength,
+          null as unknown as string,
+          undefined,
+          undefined,
+          setting,
+          group,
+          i,
+          false,
+        ) as unknown as CubismMotion;
+        if (!motion) continue;
+        // ⚠️ 是 setFadeInTime / setFadeOutTime（不是 setFadeIn ✗）
+        motion.setFadeInTime(1.0);
+        motion.setFadeOutTime(1.0);
+        motions.set(group + '_' + i, motion);
+      }
+    }
+    log('动作已加载 ' + motions.size + ' 个 · 分组 [' + groups.join(', ') + ']');
+  } catch (err) {
+    log('动作加载出错（不影响画面）✗ ' + (err && err.message ? err.message : err));
   }
 
-  // ── ⑦ 每帧 ──────────────────────────────────────────────────────────
+  const idleGroup = groups.find((g) => /idle/i.test(g)) || groups[0] || '';
+
+  /** 从某一组里随机挑一个播。`priority` 用 3(Force) 表示"点了立刻有反应"。 */
+  function playRandomFrom(group: string, priority = 2): boolean {
+    if (!group) return false;
+    const n = setting.getMotionCount(group);
+    if (!n) return false;
+    const motion = motions.get(group + '_' + Math.floor(Math.random() * n));
+    if (!motion) return false;
+    motionManager.startMotionPriority(motion, false, priority);
+    return true;
+  }
+
+  /** 点一下角色时用：优先挑**非待机**的动作（更有反应感 ✗） */
+  function playReaction(): boolean {
+    const others = groups.filter((g) => g !== idleGroup);
+    const pool = others.length ? others : groups;
+    if (!pool.length) return false;
+    return playRandomFrom(pool[Math.floor(Math.random() * pool.length)], 3);
+  }
+
+  // ── ⑧ 每帧 ──────────────────────────────────────────────────────────
   let raf = 0;
   let last = performance.now();
   let reported = false;
 
   const tick = () => {
-    const now = performance.now();
-    const dt = Math.min((now - last) / 1000, 0.1); // 卡顿时别让物理炸掉
-    last = now;
-
-    model.loadParameters();
-    scheduler.onLateUpdate(model, dt);
-    model.saveParameters();
-
-    model.update(); // Core 把顶点算成**变形后**的位置 —— 不做这一步就会散架 ✗
-
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    const mvp = new CubismMatrix44();
-    mvp.setMatrix(view.getArray());
-    mvp.multiplyByMatrix(modelMatrix);
-    renderer.setMvpMatrix(mvp);
-    renderer.drawModel(opts.shaderBase);
-
-    if (!reported) {
-      reported = true;
-      log(
-        'Live2D 就绪 ✅ 模型画布 ' + model.getCanvasWidth() + '×' + model.getCanvasHeight() +
-          ' · 绘制区 ' + canvas.width + '×' + canvas.height +
-          ' · drawable ' + model.getDrawableCount(),
-      );
-    }
+    // ⚠️ **先排下一帧再干活**：这样即使下面哪一步抛错，动画也不会整个停摆 ✗
+    //    （踩过：一个坏掉的 updater 把帧循环带停，画面直接冻住）
     raf = requestAnimationFrame(tick);
+    try {
+      const now = performance.now();
+      const dt = Math.min((now - last) / 1000, 0.1); // 卡顿时别让物理炸掉
+      last = now;
+
+      model.loadParameters();
+
+      // 动作单独隔离：`updateMotion` 内部会碰眼眨那套，而这个形象的数据有坑 ✗
+      // ⚠️ 底线是**画面绝不能因为它挂掉** —— 所以它出错只跳过动作，不跳过绘制
+      try {
+        if (motionManager.isFinished()) {
+          playRandomFrom(idleGroup, 2);
+          motionUpdated = false;
+        } else {
+          motionUpdated = motionManager.updateMotion(model, dt);
+        }
+      } catch (err) {
+        if (!motionErrors) {
+          motionErrors = true;
+          log('动作更新出错（画面不受影响）✗ ' + (err && err.message ? err.message : err));
+        }
+      }
+      model.saveParameters();
+
+      scheduler.onLateUpdate(model, dt);
+
+      model.update(); // Core 把顶点算成**变形后**的位置 —— 不做就会散架 ✗
+
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      const mvp = new CubismMatrix44();
+      mvp.setMatrix(view.getArray());
+      mvp.multiplyByMatrix(modelMatrix);
+      renderer.setMvpMatrix(mvp);
+      renderer.drawModel(opts.shaderBase);
+    } catch (err) {
+      if (!loopErrors) {
+        loopErrors = true;
+        log('帧循环出错（已跳过这一帧，动画继续）✗ ' + (err && err.message ? err.message : err));
+      }
+    }
   };
+  let loopErrors = false;
+  let motionErrors = false;
   raf = requestAnimationFrame(tick);
 
   return {
     width: model.getCanvasWidth(),
     height: model.getCanvasHeight(),
+    playReaction,
     destroy() {
       cancelAnimationFrame(raf);
       CubismFramework.dispose();

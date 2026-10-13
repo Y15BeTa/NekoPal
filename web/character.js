@@ -108,14 +108,19 @@ document.getElementById('close').addEventListener('click', () => {
 // ── 拖动角色 ────────────────────────────────────────────────────────────
 // 用 screenX / screenY（**绝对屏幕坐标**）算增量，再用 bridge 挪原生窗口。
 // 不能用 clientX：窗口一动，元素坐标系也跟着动，会互相"追尾"抖动。
+let dragged = false; // 这一轮按下有没有拖动过（决定"是拖还是点"）
+let petHandle = null; // mountPet 的返回值，点一下角色时用它播动作
+
 if (native) {
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
+  let moved = 0;
 
   character.addEventListener('mousedown', (e) => {
     if (e.target.closest('button')) return; // 按钮是"点"，不是"拖"
     dragging = true;
+    moved = 0;
     lastX = e.screenX;
     lastY = e.screenY;
     // 告诉原生「开始拖了」—— 拖拽期间它要暂停"点穿"判定，
@@ -126,7 +131,10 @@ if (native) {
 
   window.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    toNative('move', { dx: e.screenX - lastX, dy: e.screenY - lastY });
+    const dx = e.screenX - lastX;
+    const dy = e.screenY - lastY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    toNative('move', { dx, dy });
     lastX = e.screenX;
     lastY = e.screenY;
   });
@@ -134,9 +142,24 @@ if (native) {
   window.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
+    dragged = moved > 6; // 挪了几像素才算"拖"，否则当"点"
     toNative('dragging', { on: false });
   });
 }
+
+// 点一下角色 → 随机播一个动作（点击反馈）。拖完松手不算点 ✗
+character.addEventListener('click', () => {
+  if (dragged) {
+    dragged = false;
+    return;
+  }
+  if (petHandle && petHandle.playReaction && petHandle.playReaction()) {
+    character.animate(
+      [{ transform: 'scale(1)' }, { transform: 'scale(0.97)' }, { transform: 'scale(1)' }],
+      { duration: 220, easing: 'ease-out' },
+    );
+  }
+});
 
 // ── 精确命中：把"我身上"的矩形报给原生 ──────────────────────────────────
 // 原生只在这些矩形里接收鼠标事件；其余地方 setIgnoresMouseEvents_(True)，
@@ -217,6 +240,7 @@ async function mountLive2D() {
       shaderBase: '/api/avatar-l2d/shaders/',
       onLog: log,
     });
+    petHandle = handle;
     character.classList.add('has-model');
     log('✅ Live2D 就绪：模型画布 ' + handle.width + '×' + handle.height);
   } catch (err) {
