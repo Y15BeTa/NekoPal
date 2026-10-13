@@ -569,3 +569,61 @@ async function initAvatarPickers() {
 }
 
 initAvatarPickers();
+
+// ── 角色聊天：状态 + 一键打开配置文件夹 ────────────────────────────────
+// 为什么放在界面上：那两个配置文件在 ~/.config/nekopal/ 下，普通人根本找不到。
+// 不配也完全能用（退回静态台词），所以这里只做「指路」+「说清现状」。
+async function loadChatStatus() {
+  const body = document.getElementById('chatBody');
+  if (!body) return;
+  let d;
+  try {
+    d = await (await fetch('/api/chat')).json();
+  } catch (err) {
+    body.textContent = '读不到配置：' + err;
+    return;
+  }
+
+  const rows = [
+    d.enabled
+      ? '✅ 已启用 —— 点角色时由模型现编一句（模型：' + d.model + '）'
+      : '⬜ 未配置 —— 现在用固定的那几句静态台词（完全能玩，想升级就填下面两个文件）',
+    '⚙️ 大模型配置：' + d.chat_file,
+    '   · api_key：' + (d.has_key
+      ? '已填 ✅（接口只回报“有没有”，不会返回内容）'
+      : '未填 ⬜'),
+    '📄 我的信息：' + d.profile_file +
+      (d.has_profile ? '（已填 ' + d.profile_chars + ' 字 ✅）' : '（还是空模板 ⬜）'),
+    '🎭 角色性格：~/.config/nekopal/characters/<角色 id>/persona.md',
+    '   （没写的话会退回仓库里的示例 characters/example-rana/persona.md）',
+    '⚠️ 两条红线：api_key 别提交进任何仓库；profile.md 里别放不该外发的东西',
+  ];
+
+  body.innerHTML = '';
+  for (const t of rows) {
+    const div = document.createElement('div');
+    div.textContent = t;
+    body.append(div);
+  }
+}
+
+function initChatPanel() {
+  const panel = document.getElementById('chatPanel');
+  const openBtn = document.getElementById('chatOpen');
+  const refreshBtn = document.getElementById('chatRefresh');
+  if (!panel) return;
+
+  panel.addEventListener('toggle', () => {
+    if (panel.open) loadChatStatus();
+  });
+  openBtn?.addEventListener('click', async () => {
+    try {
+      await fetch('/api/chat/open', { method: 'POST' });
+    } catch (err) {
+      // 打不开就算了 —— 界面上本来就写了路径
+    }
+  });
+  refreshBtn?.addEventListener('click', loadChatStatus);
+}
+
+initChatPanel();

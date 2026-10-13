@@ -781,6 +781,31 @@ def build_router(runtime: Runtime) -> APIRouter:
 
         return chat_mod.public_status()
 
+    @router.post("/chat/open")
+    async def chat_open() -> dict:
+        """在文件管理器里打开配置文件夹 ✗。
+
+        为什么要它：那两个文件（`chat.yaml` / `profile.md`）在 `~/.config/nekopal/` 下 ✗，
+        普通人**根本找不到** ✗ —— 所以界面上给一个「一键打开」✅
+        """
+
+        import subprocess as _sp
+        import sys as _sys
+
+        from nekopal.packs import config_dir
+
+        target = config_dir()
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        opener = "open" if _sys.platform == "darwin" else "xdg-open"
+        try:
+            _sp.Popen([opener, str(target)])
+        except Exception as exc:  # noqa: BLE001
+            raise _invalid("打不开文件夹：{}".format(exc)) from None
+        return {"opened": str(target)}
+
     @router.put("/chat")
     async def chat_config(request: Request) -> dict:
         """改 LLM 配置（合并式 ✗）。空字符串 = 清掉该项 ✗。"""
