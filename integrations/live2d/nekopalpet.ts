@@ -226,28 +226,79 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     }
   }
 
-  // ── ⑥ 视图矩阵 + 模型缩放 ────────────────────────────────────────────
-  // 两个矩阵各管一件事，别混：
-  //   · view 决定「逻辑屏幕有多大」—— 它的宽高比必须**等于 canvas 的**，
-  //     否则整个画面会被拉扁（这就是"太扁"的根源 ✗）
-  //   · modelMatrix 决定「模型在逻辑屏幕里占多大」—— 用 setHeight 让它**填满高度**
+  // ── ⑥ 缩放：让 **view 直接框住角色的包围盒**（不碰模型矩阵）────────────
+  //
+  // 为什么这么绕：`CubismModelMatrix` 的构造函数里**藏了一次 setHeight(2.0)** ✗，
+  // 而且 `setWidth/setHeight` 都是按它内部的 `_width/_height` 算缩放 ✗ ——
+  // 叠起来很容易算出意料之外的结果。
+  //
+  // 而这个模型**没有 Layout** ✗（model3.json 里没这个字段），
+  // 所以没有任何东西负责把它居中 ✗ —— 它就一直画在画布左下角。
+  //
+  // ⇒ 最干净的做法：**模型矩阵保持单位矩阵**（完全不动模型），
+  //   让 view 的逻辑矩形**正好框住角色的包围盒**，并按窗口比例外扩。
+  //   这样：等比 ✅ 自动居中 ✅ 尽量大 ✅ 一个 API 坑都不踩 ✅
   const canvasAspect = canvas.width / canvas.height;
   const view = new CubismViewMatrix();
-  view.setScreenRect(-canvasAspect, canvasAspect, -1.0, 1.0);
 
-  // ⚠️ 不用 setupFromLayout：它按 model3.json 里那个 Layout 盒子来摆，
-  //    盒子的宽高比和窗口未必一致，会引入额外的拉伸 ✗
-  const modelMatrix = new CubismModelMatrix(
-    model.getCanvasWidth(),
-    model.getCanvasHeight(),
-  );
-  modelMatrix.setHeight(2.0 * FIT); // 逻辑高度是 -1..1 共 2
+  const b = modelBounds();
+  const bw = b.x1 - b.x0;
+  const bh = b.y1 - b.y0;
+  const cx = (b.x0 + b.x1) / 2;
+  const cy = (b.y0 + b.y1) / 2;
+
+  let hw = bw / 2;
+  let hh = bh / 2;
+  // 按窗口比例把框外扩（保证逻辑矩形和 viewport 比例一致 → 绝不变形 ✗）
+  if (bw / bh > canvasAspect) {
+    hh = hw / canvasAspect;
+  } else {
+    hw = hh * canvasAspect;
+  }
+  hw /= FIT; // FIT = 留边距（0.95 → 角色占 95%）
+  hh /= FIT;
+
+  view.setScreenRect(cx - hw, cx + hw, cy - hh, cy + hh);
+
+  // 模型矩阵：单位矩阵（不做任何变换）
+  const modelMatrix = new CubismMatrix44();
+
   log(
-    '缩放：模型画布 ' + model.getCanvasWidth() + '×' + model.getCanvasHeight() +
-      ' · canvas 宽高比 ' + canvasAspect.toFixed(3) +
-      ' · 模型宽高比 ' + (model.getCanvasWidth() / model.getCanvasHeight()).toFixed(3) +
-      ' · 填充 ' + FIT,
+    '缩放：角色包围盒 ' + bw.toFixed(3) + '×' + bh.toFixed(3) +
+      '（比例 ' + (bw / bh).toFixed(3) + '）· 画布 ' +
+      model.getCanvasWidth() + '×' + model.getCanvasHeight() +
+      ' · 逻辑框 ' + (2 * hw).toFixed(3) + '×' + (2 * hh).toFixed(3) +
+      '（' + (hw / hh).toFixed(3) + '）· 窗口 ' + canvasAspect.toFixed(3) +
+      ' · 边距 ' + FIT,
   );
+
+  /** 量出角色真正占了多大（画布往往比角色宽 ✗，按画布缩放会显得又小又细 ✗） */
+  function modelBounds(): { x0: number; y0: number; x1: number; y1: number } {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    // ⚠️ 框架的 CubismModel 没有 `.drawables`（那是 Core 对象 ✗），
+    //    它给的是 getDrawableVertexPositions(i) → Float32Array（x,y 交替 ✗）
+    const n = model.getDrawableCount();
+    for (let i = 0; i < n; i++) {
+      const arr = model.getDrawableVertexPositions(i) as unknown as Float32Array;
+      if (!arr || !arr.length) continue;
+      for (let k = 0; k + 1 < arr.length; k += 2) {
+        const x = arr[k];
+        const y = arr[k + 1];
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    if (!Number.isFinite(x0) || x1 <= x0 || y1 <= y0) {
+      // 量不出来就退回画布（至少不会崩 ✗）
+      return { x0: 0, y0: 0, x1: model.getCanvasWidth(), y1: model.getCanvasHeight() };
+    }
+    return { x0, y0, x1, y1 };
+  }
 
   // ── ⑦ 动作（素材都在模型里：这个形象有 246 个）───────────────────────
   // ⚠️ 整段包 try/catch：动作加载失败**绝不能**影响画面 ✗

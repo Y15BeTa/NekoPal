@@ -147,17 +147,17 @@ if (native) {
   });
 }
 
-// 点一下角色 → 换动作 + 眨眼（点击反馈）。
-// ⚠️ **不做整体缩放** —— 用户明确说过不要"点一下整个人缩一下" ✗
+// 点一下角色 → 换一个动作（点击反馈）。
+// ⚠️ **不眨眼**：眨眼改成每隔几秒自动来一次（用户明确说的 ✗）
+// ⚠️ **不做整体缩放**：用户明确不要"点一下整个人缩一下" ✗
 character.addEventListener('click', () => {
   if (dragged) {
     dragged = false;
     return;
   }
-  if (!petHandle) return;
-  const played = petHandle.playReaction && petHandle.playReaction();
-  const blinked = petHandle.blink && petHandle.blink();
-  if (played || blinked) log('点击反应：动作=' + played + ' 眨眼=' + blinked);
+  if (petHandle && petHandle.playReaction && petHandle.playReaction()) {
+    log('点击反应：换了一个动作 ✅');
+  }
 });
 
 // ── 精确命中：把"我身上"的矩形报给原生 ──────────────────────────────────
