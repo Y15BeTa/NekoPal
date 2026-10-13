@@ -75,6 +75,16 @@ class Runtime:
     def subscribe(self, queue: "asyncio.Queue[Dict[str, Any]]") -> None:
         self._subscribers.add(queue)
 
+    @property
+    def subscriber_count(self) -> int:
+        """当前有几个客户端连着 `/api/events`（跟读窗开着才有）。
+
+        暴露它是为了能一眼回答"窗口到底连上没有" ——
+        没有这个数的时候，我们只能靠猜（踩过：窗口没开，却以为是插件坏了）。
+        """
+
+        return len(self._subscribers)
+
     def unsubscribe(self, queue: "asyncio.Queue[Dict[str, Any]]") -> None:
         self._subscribers.discard(queue)
 

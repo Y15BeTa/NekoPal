@@ -55,6 +55,8 @@ def build_router(runtime: Runtime) -> APIRouter:
             "backends": runtime.tts.describe(),
             "cache": runtime.cache.stats(),
             "export_formats": available_formats(),
+            # 有几个客户端连着 /api/events —— 「窗口开着吗」的直接答案
+            "subscribers": runtime.subscriber_count,
         }
 
     @router.get("/backends")
