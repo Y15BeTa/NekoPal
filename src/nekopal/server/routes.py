@@ -7,6 +7,7 @@ import hashlib
 import json
 import mimetypes
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -594,6 +595,31 @@ def build_router(runtime: Runtime) -> APIRouter:
     # 顺带把 Core 挡在这一层：它**不进仓库**（见 characters/README.md 的红线）。
 
     # -- UI 偏好（主窗 ↔ 角色窗口 共享 ✗）---------------------------------
+    # -- 口型同步（主窗 → 角色窗口 ✗）-------------------------------------
+    # 音频在主跟读窗的 <audio> 里 ✗，角色窗口是**另一个进程**、够不着 ✗。
+    # 所以：主窗用 WebAudio 算出电平 → POST 过来 → 角色窗轮询着张嘴 ✅
+    _lip = {"level": 0.0, "at": 0.0}
+
+    @router.post("/lip")
+    async def post_lip(request: Request) -> dict:
+        """主窗上报音频电平（0..1 ✗）。高频、fire-and-forget ✗。"""
+
+        try:
+            payload = await request.json()
+            level = float(payload.get("level", 0.0))
+        except Exception:  # noqa: BLE001
+            raise _invalid("要传 {\"level\": 0..1}") from None
+        _lip["level"] = max(0.0, min(1.0, level))
+        _lip["at"] = time.monotonic()
+        return {"ok": True}
+
+    @router.get("/lip")
+    async def get_lip() -> dict:
+        """角色窗取电平 ✗。超过 0.4 秒没更新就当静音 ✗（停止朗读时会归位 ✗）。"""
+
+        stale = (time.monotonic() - _lip["at"]) > 0.4
+        return {"level": 0.0 if stale else _lip["level"], "stale": stale}
+
     @router.get("/ui")
     async def get_ui() -> dict:
         """主窗与角色窗口共享的偏好：要不要开人物、选哪个形象。"""

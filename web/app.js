@@ -545,3 +545,56 @@ async function initOutfitPicker() {
 }
 
 initOutfitPicker();
+
+// ── 口型同步：把音频电平报给后端（角色窗口轮询它来张嘴）────────────────
+// 为什么要在主窗做：音频在这里的 <audio> 里，角色窗口是**另一个进程**，够不着。
+// ⚠️ `createMediaElementSource` 会把音频**改道** ✗ —— 必须再接回 destination ✗，
+//    否则就**没声音了**（这是最容易踩的坑 ✗）。
+let __lipAnalyser = null;
+let __lipBuf = null;
+let __lipLast = 0;
+
+function reportLip() {
+  if (!__lipAnalyser) return;
+  __lipAnalyser.getByteTimeDomainData(__lipBuf);
+  let sum = 0;
+  for (let i = 0; i < __lipBuf.length; i++) {
+    const v = (__lipBuf[i] - 128) / 128;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / __lipBuf.length);
+  // 经验映射：rms < 0.02 当静音；0.15 以上算大张嘴 ✗
+  const level = Math.max(0, Math.min(1, (rms - 0.02) * 6));
+  // 变化很小就不发（省点请求 ✗）；静音也要偶尔发一次，好让它闭嘴 ✗
+  const now = Date.now();
+  if (Math.abs(level - __lipLast) < 0.02 && level > 0 && now - __lipLast < 200) return;
+  __lipLast = level;
+  fetch('/api/lip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level }),
+  }).catch(() => {});
+}
+
+function initLipSync() {
+  const audio = document.getElementById('audio');
+  if (!audio) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  try {
+    const ctx = new Ctx();
+    const src = ctx.createMediaElementSource(audio);
+    __lipAnalyser = ctx.createAnalyser();
+    __lipAnalyser.fftSize = 256;
+    src.connect(__lipAnalyser);
+    __lipAnalyser.connect(ctx.destination); // ← 这一句不能少 ✗（不然没声音 ✗）
+    __lipBuf = new Uint8Array(__lipAnalyser.fftSize);
+    setInterval(reportLip, 70);
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    report('lip', '口型同步已接上');
+  } catch (err) {
+    report('lip', '口型同步没接上：' + err);
+  }
+}
+
+initLipSync();

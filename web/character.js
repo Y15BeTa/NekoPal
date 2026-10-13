@@ -214,8 +214,36 @@ function currentOutfitInfo() {
   return (avatarInfo?.outfits || []).find((o) => o.folder === currentOutfit) || null;
 }
 
+/**
+ * 保证手里有 /api/avatar 的数据。
+ *
+ * ⚠️ 踩过：`boot()` 因为别的原因提前返回时 ✗，`avatarInfo` 会是 null ✗，
+ * 菜单里就全变成「（没有可选形象）」「（没有动作）」✗ ——
+ * 看起来像"没有素材"，其实是"没拿到数据" ✗。
+ * 所以菜单打开时**再兜一次底** ✗。
+ */
+async function ensureAvatarInfo() {
+  if (avatarInfo?.outfits) return avatarInfo;
+  try {
+    avatarInfo = await (await fetch('/api/avatar')).json();
+    log(
+      '补取 /api/avatar：形象 ' + (avatarInfo?.outfits?.length ?? '?') +
+        ' 个 · active ' + avatarInfo?.active,
+    );
+  } catch (err) {
+    log('补取 /api/avatar 失败 ✗ ' + err);
+  }
+  return avatarInfo;
+}
+
 function buildRoot() {
   const o = currentOutfitInfo();
+  log(
+    '菜单：形象 ' + (avatarInfo?.outfits?.length ?? 'null') +
+      ' 个 · 当前 ' + (o ? o.label : '?') +
+      ' · 动作组 ' + (o ? o.motions.length : '?') +
+      ' · 表情 ' + (o ? o.expressions.length : '?'),
+  );
   menu.append(mkHead('猫伴 · ' + (o ? o.label : '')));
   menu.append(mkButton('换装 ▸' + (o ? '  ' + o.label : ''), () => buildOutfits()));
   menu.append(
@@ -304,8 +332,9 @@ function buildExpressions() {
   }
 }
 
-window.addEventListener('contextmenu', (e) => {
+window.addEventListener('contextmenu', async (e) => {
   e.preventDefault();
+  await ensureAvatarInfo(); // 兜底：菜单必须有数据 ✗
   openMenu(buildRoot);
 });
 window.addEventListener('mousedown', (e) => {
@@ -468,3 +497,25 @@ boot();
 setInterval(pollUi, 3000);
 reportHotRects();
 if (native) toNative('hello');
+
+// ── 口型同步：跟后端要电平（约 70ms 一次）──────────────────────────────
+// 音频在主跟读窗里 ✗，它算好电平 POST 给后端 ✗，这里轮询着张嘴 ✗。
+// ⚠️ 用**递归 setTimeout** 而不是 setInterval —— fetch 慢的时候不会堆起来 ✗。
+let lipSeen = -1;
+async function lipLoop() {
+  try {
+    if (petHandle?.setMouth) {
+      const d = await (await fetch('/api/lip')).json();
+      petHandle.setMouth(d.level || 0);
+      // 偶尔记一笔，方便确认真的在动 ✗
+      if (lipSeen < 0 && (d.level || 0) > 0.05) {
+        lipSeen = d.level;
+        log('口型：收到电平 ' + d.level.toFixed(3) + ' ✅');
+      }
+    }
+  } catch (err) {
+    // 后端在重启之类的 —— 下一轮再试
+  }
+  setTimeout(lipLoop, 70);
+}
+lipLoop();
