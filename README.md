@@ -302,7 +302,7 @@ nekopal control next|prev  # 下一句 / 上一句
 1. 打开「快捷指令」→ 新建
 2. 加操作「**运行 Shell 脚本**」，脚本填**绝对路径**：
    ```
-   /Users/yuwenyan/Documents/NekoPal/.venv/bin/nekopal control toggle
+   ~/Documents/NekoPal/.venv/bin/nekopal control toggle
    ```
    （快捷键调用时 PATH 很干净，所以**必须写绝对路径**）
 3. 在快捷指令的详情面板里点「**添加键盘快捷键**」→ 按一个组合（如 `⌃⌥⌘P`）

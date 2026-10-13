@@ -68,13 +68,15 @@ async function prewarmLines() {
  * （而且进同一个缓存 ✗，同一句第二次秒回 ✅）
  */
 async function speakRandom() {
-  if (!voiceLines.length) return;
-  const text = voiceLines[Math.floor(Math.random() * voiceLines.length)];
   try {
-    const res = await fetch('/api/avatar/say', {
+    // ⚠️ 走 `/api/avatar/chat` ✗ —— **由后端决定**：
+    //    配了 LLM → 按角色性格 + 私人信息**现生成一句** ✅
+    //    没配 / 失败 → 退回角色包的静态台词 ✅
+    //    所以前端只有这一条路 ✗，不用判断 ✗（也不会因为没配就哑掉 ✗）
+    const res = await fetch('/api/avatar/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ character: avatarInfo?.active_character || '' }),
     });
     const data = await res.json();
     if (!data.url) {

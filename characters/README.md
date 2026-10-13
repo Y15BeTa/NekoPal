@@ -119,3 +119,29 @@ persona:                        # 可选（Phase 4：角色化改写）
 - 🚫 本项目**不提供**任何 Live2D 模型的下载入口或清单。
 
 音色部分的合规要求见 [`../voices/README.md`](../voices/README.md)。
+
+## 🧠 角色性格：`persona.md`（可选）
+
+想让角色**按性格随机说一句**（而不是固定的几句台词 ✗）时，给它写一份性格文档 ✗：
+
+```
+~/.config/nekopal/characters/<角色 id>/persona.md     ← 优先读这里（仓库外 ✗）
+<repo>/characters/example-<角色 id>/persona.md         ← 找不到就退回示例 ✗
+```
+
+- **仓库里只放示例** ✗：`characters/example-rana/persona.md`（一份**写作示范** ✗）
+- **你自己的放仓库外** ✗ —— 别把私人语境写进公开仓库 ✗
+
+配套的两个文件也在**仓库外** ✗：
+
+| 文件 | 用途 |
+| --- | --- |
+| `~/.config/nekopal/chat.yaml` | LLM 配置（`base_url` / **`api_key`** / `model` ✗） |
+| `~/.config/nekopal/profile.md` | 你的私人信息（称呼、近况、在意的事 ✗） |
+
+> ⚠️ **`api_key` 只在 `chat.yaml` 里** ✗ ——
+> 本项目的接口**只回报「有没有 key」** ✗，**从不返回 key 本身** ✗，日志里也不会出现 ✗。
+>
+> 🔌 **不配也能用** ✅ —— 没配 LLM 时自动退回角色包里的**静态台词** ✗（现成的 6 句 ✗）。
+>
+> 📄 写作要点：最能影响生成风格的是文档里的「**说话方式**」和「**口头禅**」两节 ✗。

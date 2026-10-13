@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import mimetypes
+import random
 import re
 import time
 from pathlib import Path
@@ -765,6 +766,89 @@ def build_router(runtime: Runtime) -> APIRouter:
             "voice": voice,
             "cached": bool(cached),
             # ⚠️ 字段是 `audio_id` 不是 `id` ✗（踩过 ✗）
+            "url": "/api/audio/{}".format(segment.audio_id),
+        }
+
+    # -- 角色聊天（大模型生成一句 ✗，然后 TTS）-----------------------------
+    # 三个接口位都在**仓库外**的 `~/.config/nekopal/` ✗：
+    #   chat.yaml（含 api_key ✗）/ profile.md（私人信息 ✗）/ characters/<id>/persona.md
+    # ⚠️ api_key **绝不**进日志、**绝不**通过接口返回 ✗（见 nekopal/chat.py 的注释 ✗）
+    @router.get("/chat")
+    async def chat_status() -> dict:
+        """LLM 配好没有（只回 has_key ✗，不回 key 本身 ✗）。"""
+
+        from nekopal import chat as chat_mod
+
+        return chat_mod.public_status()
+
+    @router.put("/chat")
+    async def chat_config(request: Request) -> dict:
+        """改 LLM 配置（合并式 ✗）。空字符串 = 清掉该项 ✗。"""
+
+        from nekopal import chat as chat_mod
+
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            raise _invalid("JSON 格式不对") from None
+        if not isinstance(payload, dict):
+            raise _invalid("要传一个对象")
+        chat_mod.save_config(payload)
+        return chat_mod.public_status()
+
+    @router.post("/avatar/chat")
+    async def avatar_chat(request: Request) -> dict:
+        """**AI 生成一句 + 合成** ✗ —— 角色窗口点一下时用这个。
+
+        没配 LLM、或生成失败时，**自动退回角色包里的静态台词** ✅
+        （所以"不配也能用"✗，只是台词是固定那几句 ✗）
+        """
+
+        from nekopal import chat as chat_mod
+
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            payload = {}
+        character = str((payload or {}).get("character") or "").strip() or None
+
+        generated = None
+        note = "static"
+        if chat_mod.is_enabled():
+            try:
+                generated = chat_mod.generate_line(character)
+                note = "ai"
+            except Exception as exc:  # noqa: BLE001 - 生成失败不是错误 ✗
+                note = "static-after-{}".format(type(exc).__name__)
+                runtime.record("avatar-chat-failed", error=str(exc)[:120])
+
+        if generated is None:
+            lines = _voice_lines(character)
+            generated = {"text": random.choice(lines), "model": "(static)"}
+
+        text = str(generated["text"])[:200]
+        options = SynthOptions.from_dict({})
+        sentences = prepare_sentences(text, {}, runtime.settings.clean)
+        if not sentences:
+            raise _invalid("清洗后没有可读的内容")
+
+        voice = runtime.tts.resolve_voice_id(
+            runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
+        )
+        segment, cached = await synthesize_sentence(
+            sentences[0],
+            voice,
+            options,
+            runtime.tts,
+            runtime.cache,
+            runtime.settings.fallback_voice,
+        )
+        runtime.record("avatar-chat", text=sentences[0], source=note, cached=bool(cached))
+        return {
+            "text": sentences[0],
+            "voice": voice,
+            "source": note,  # ai / static / static-after-XXX ✗（一眼看出为什么是静态 ✗）
+            "cached": bool(cached),
             "url": "/api/audio/{}".format(segment.audio_id),
         }
 
