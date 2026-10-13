@@ -303,7 +303,7 @@ def run(
             elif action == "hot":
                 # 网页告诉我们"哪些矩形算我身上" → 据此做精确命中（见 _tick）
                 try:
-                    self._hot_rects = [
+                    incoming = [
                         {
                             "x": float(r.get("x", 0)),
                             "y": float(r.get("y", 0)),
@@ -315,12 +315,26 @@ def run(
                 except Exception as exc:  # noqa: BLE001
                     print("置顶小条：hot 矩形解析失败：{}".format(exc), flush=True)
                 else:
-                    print(
-                        "置顶小条：收到 {} 个「可点区域」→ 其余地方点穿桌面 ✨".format(
-                            len(self._hot_rects)
-                        ),
-                        flush=True,
-                    )
+                    # ⚠️ **空列表 / 全是零尺寸 → 丢掉，保留上一次的** ✗
+                    #    否则一旦收到一次空的，`inside` 就永远是 None ✗ ——
+                    #    猫爪光标和"精确命中"会**一起静默失效，而且不再恢复** ✗
+                    #    （2026-10-14 踩到：用户说"一开始是猫爪，过一会儿就没了"）
+                    usable = [r for r in incoming if r["w"] > 1 and r["h"] > 1]
+                    if usable:
+                        self._hot_rects = usable
+                        print(
+                            "置顶小条：收到 {} 个「可点区域」→ 其余地方点穿桌面 ✨".format(
+                                len(usable)
+                            ),
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            "置顶小条：热区报了 {} 个但**有效 0 个** → 保留上一次的 {} 个".format(
+                                len(incoming), len(self._hot_rects)
+                            ),
+                            flush=True,
+                        )
             elif action == "hover":
                 # 网页的回执：证明 __nekopalHover 真的跑到了
                 print(
@@ -500,7 +514,7 @@ def run(
     # 「鼠标在不在身上」，顺手切光标不额外花钱。
     paw = {
         "cursor": None, "ok": None, "wanted": None, "checked": -9.0,
-        "rects": None, "tracked": False, "delegate": None,
+        "rects": None, "tracked": False, "delegate": None, "image": None,
     }
 
     def _make_paw_owner():
@@ -528,23 +542,29 @@ def run(
         try:
             from AppKit import NSCursor, NSImage, NSMakeSize
 
-            if paw["cursor"] is None and cursor_image and Path(cursor_image).is_file():
-                img = NSImage.alloc().initWithContentsOfFile_(str(cursor_image))
-                if img is not None:
-                    print(
-                        "置顶小条：猫爪图 {}×{} 合法={} reps={}".format(
-                            img.size().width, img.size().height, img.isValid(),
-                            img.representations().__len__(),
-                        ),
-                        flush=True,
-                    )
-                    # 图是 64px，按 **32 点**显示 —— 高分屏才锐利
-                    img.setSize_(NSMakeSize(32.0, 32.0))
-                    # 热点 (16,26)：图的上方中间（AppKit 原点在**左下**，32-6=26）
+            # ⚠️ 每次**重新造**光标，并且把 NSImage **强引用住**（paw["image"]）✗
+            #    踩过的坑：把 image 放在局部变量里 —— pyobjc 里它出了作用域就可能被回收 ✗，
+            #    光标对象还在，但**画不出来**（屏幕上还是箭头 ✗），
+            #    而且日志一切正常，极难查 ✗。重建的代价可以忽略（12.5Hz 而已 ✗）。
+            if cursor_image and Path(cursor_image).is_file():
+                if paw.get("image") is None:
+                    img = NSImage.alloc().initWithContentsOfFile_(str(cursor_image))
+                    if img is not None:
+                        print(
+                            "置顶小条：猫爪图 {}×{} 合法={} reps={}".format(
+                                img.size().width, img.size().height, img.isValid(),
+                                img.representations().__len__(),
+                            ),
+                            flush=True,
+                        )
+                        img.setSize_(NSMakeSize(32.0, 32.0))  # 64px 图 → 32 点
+                        paw["image"] = img                     # ← 强引用，别让它被回收
+                        print("置顶小条：猫爪光标已加载 ✅", flush=True)
+                if paw.get("image") is not None:
+                    # 热点 (16,26)：图的上方中间（AppKit 原点在**左下**）
                     paw["cursor"] = NSCursor.alloc().initWithImage_hotSpot_(
-                        img, NSMakePoint(16.0, 26.0)
+                        paw["image"], NSMakePoint(16.0, 26.0)
                     )
-                    print("置顶小条：猫爪光标已加载 ✅", flush=True)
 
             enabled = _paw_wanted()
             # 热区变了（按钮浮现 / 菜单收起）→ 重新登记光标区域
@@ -716,9 +736,12 @@ def run(
                         # 网页还没报到 —— 先什么都别动（默认：能点、按钮不显示）
                         inside = None
 
+                # 🐾 猫爪光标：**每帧都走一遍**（不只在 inside 有值时）——
+                #    这是在「重申」系统光标：别的程序随时会把它抢走；
+                #    而且热区偶尔会晚到 / 报空（inside=None），那时也得能重设。
+                _apply_paw_cursor(bool(inside))
+
                 if inside is not None:
-                    # 🐾 猫爪光标（放在最前面：切光标要**立刻**生效）
-                    _apply_paw_cursor(inside)
                     if inside:
                         bridge._ever_inside = True
                     # 🛡️ 保险：在"见过鼠标进身上"之前**绝不开启穿透**。
