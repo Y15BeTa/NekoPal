@@ -542,10 +542,10 @@ def run(
         try:
             from AppKit import NSCursor, NSImage, NSMakeSize
 
-            # ⚠️ 每次**重新造**光标，并且把 NSImage **强引用住**（paw["image"]）✗
-            #    踩过的坑：把 image 放在局部变量里 —— pyobjc 里它出了作用域就可能被回收 ✗，
-            #    光标对象还在，但**画不出来**（屏幕上还是箭头 ✗），
-            #    而且日志一切正常，极难查 ✗。重建的代价可以忽略（12.5Hz 而已 ✗）。
+            # ⚠️ NSImage 要**强引用住**（paw["image"]）✗ ——
+            #    放在局部变量里的话，pyobjc 里它出了作用域可能被回收 ✗，
+            #    光标对象还在但**画不出来**，日志却一切正常，极难查 ✗。
+            # ⚠️ 但 NSCursor 本身**只造一次、一直复用** ✗ —— 见下面那段注释。
             if cursor_image and Path(cursor_image).is_file():
                 if paw.get("image") is None:
                     img = NSImage.alloc().initWithContentsOfFile_(str(cursor_image))
@@ -560,8 +560,14 @@ def run(
                         img.setSize_(NSMakeSize(32.0, 32.0))  # 64px 图 → 32 点
                         paw["image"] = img                     # ← 强引用，别让它被回收
                         print("置顶小条：猫爪光标已加载 ✅", flush=True)
-                if paw.get("image") is not None:
+                if paw.get("image") is not None and paw["cursor"] is None:
                     # 热点 (16,26)：图的上方中间（AppKit 原点在**左下**）
+                    #
+                    # ⚠️ **NSCursor 只造一次，之后一直复用** ——
+                    #    2026-10-14 踩到：我一度改成"每帧重建"，
+                    #    结果**猫爪完全不显示**了 ✗：新对象 `set()` 之后 80ms
+                    #    又被下一次替换掉并释放 ✗，而窗口服务器手上还拿着那个
+                    #    已经释放的对象 → 画不出来。日志却一切正常 ✗。
                     paw["cursor"] = NSCursor.alloc().initWithImage_hotSpot_(
                         paw["image"], NSMakePoint(16.0, 26.0)
                     )
