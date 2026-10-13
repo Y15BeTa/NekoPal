@@ -19,6 +19,20 @@ const BASE_SIZE = { w: 360, h: 460 };
 let petHandle = null; // mountModel 的返回值
 let avatarInfo = null; // /api/avatar 的结果
 let currentOutfit = null; // 当前形象目录名
+let lastUiOutfit = null; // 上次从 ui.json 读到的形象（用来判断"是不是别人改的" ✗）
+
+/** 写回主窗/角色窗共享的偏好 ✗ */
+async function saveUi(patch) {
+  try {
+    await fetch('/api/ui', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  } catch (err) {
+    // 失败算了 —— 下次再点
+  }
+}
 let dragged = false; // 这一轮按下有没有拖动过（决定"是拖还是点"）
 
 function toNative(action, extra = {}) {
@@ -483,6 +497,10 @@ async function switchOutfit(outfit) {
     petHandle = null;
     await mountModel(url);
     currentOutfit = outfit.folder;
+    lastUiOutfit = outfit.folder; // 别让轮询以为自己该换 ✗
+    // ⚠️ **必须写回 ui.json** ✗ —— 否则 3 秒后轮询读到旧的 ui.outfit ✗，
+    //    就会把你刚换的衣服**又换回去** ✗（用户报的正是这个 ✗）
+    await saveUi({ outfit: outfit.folder, show_avatar: true });
   } catch (err) {
     log('换装失败 ✗ ' + (err && err.message ? err.message : err));
   }
@@ -508,6 +526,7 @@ async function boot() {
   );
   const o = chosen || (active.outfits || []).find((x) => active.model?.startsWith(x.path));
   currentOutfit = o ? o.folder : null;
+  lastUiOutfit = avatarInfo.active_outfit || currentOutfit;
   log(
     '角色：' + active.name + ' · 形象 ' + (o ? o.label : '?') +
       ' · 可选 ' + (active.outfits || []).length + ' 个' +
