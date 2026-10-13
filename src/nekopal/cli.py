@@ -106,6 +106,31 @@ def _cmd_read(args: argparse.Namespace) -> int:
     return 0
 
 
+def attach_voice_packs(registry) -> int:
+    """把「音色包查询」接到变声后端上 —— **凡是会合成 `rvc:*` 的地方都必须调它**。
+
+    漏掉的后果很隐蔽：`RvcBackend` 找不到包 → 合成失败 → `synthesize_sentence`
+    **静默退回兜底音色** → 用户以为在用包音色，其实听到的是 `say`（踩过：导出要楽奈拿到 say）。
+
+    返回扫到的音色包数量（供打印/测试）。
+    """
+
+    from nekopal.packs import load_packs
+
+    collection = load_packs(known_backends=[backend.id for backend in registry.all()])
+
+    def find(voice_id: str):
+        for pack in collection.voices:
+            if pack.full_id == voice_id or pack.id == voice_id:
+                return pack
+        return None
+
+    rvc = registry.get("rvc")
+    if rvc is not None and hasattr(rvc, "attach"):
+        rvc.attach(registry, find, lambda: collection)
+    return len(collection.voices)
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
     """把一整块文字合成并导出成一个音频文件（通勤播客）。"""
 
@@ -132,6 +157,10 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
     registry = build_registry()
     cache = AudioCache(settings.cache_dir, max_mb=settings.cache_max_mb)
+    # ⚠️ 必须把「音色包查询」接上，否则 `rvc:*` 这类**包音色**合成不出来，
+    #    而 synthesize_sentence 会**静默退回兜底音色** ——
+    #    结果就是你导出「要楽奈」却拿到 `say` 的声音，而且**没有任何提示**（踩过）。
+    attach_voice_packs(registry)
     voice = registry.resolve_voice_id(
         args.voice or settings.default_voice, fallback=settings.fallback_voice
     )
@@ -145,15 +174,26 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
     async def collect():
         paths = []
+        fell_back = 0
         try:
             for index, sentence in enumerate(sentences, 1):
-                segment, _ = await synthesize_sentence(
+                segment, used_fallback = await synthesize_sentence(
                     sentence, voice, options, registry, cache, settings.fallback_voice
                 )
+                if used_fallback:
+                    fell_back += 1
                 paths.append(segment.path)
                 print("  [{}/{}] {:5.2f}s  {}".format(index, len(sentences), segment.duration, sentence[:26]))
         finally:
             await registry.aclose()
+        if fell_back:
+            # **不许静默**：退回了兜底音色就必须说出来（否则导出的是"另一个人的声音"却没人知道）
+            print(
+                "  ⚠️ 有 {} 句退回了兜底音色（{} 用不了）—— 导出的不是你要的音色".format(
+                    fell_back, voice
+                ),
+                file=sys.stderr,
+            )
         return paths
 
     paths = asyncio.run(collect())

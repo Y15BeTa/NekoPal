@@ -75,6 +75,8 @@ class VoicePack:
     base_voice: Optional[str] = None
     rvc_model: Optional[str] = None
     rvc_index: Optional[str] = None
+    #: base 的语速（<1 更慢 → 更"慵懒"）。可选。
+    rvc_rate: Optional[float] = None
     command: Optional[List[str]] = None
 
     @property
@@ -318,6 +320,7 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
     base_voice = None
     resolved_model = None
     resolved_index = None
+    rvc_rate = None
 
     if backend == "sovits":
         ref = _resolve(folder, section.get("ref_audio"))
@@ -333,6 +336,16 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
             reasons.append("rvc 音色需要在 `rvc` 段里给出 `base_voice`（先用哪个音色合成）")
         if not section.get("model"):
             reasons.append("rvc 音色需要在 `rvc` 段里给出 `model`（你下载的变声模型）")
+        #: 可选：base 的语速（<1 更慢）。「慵懒」主要靠它 —— 注意它改的是**源**的语速，
+        #: 而 RVC 保留时间轴，所以最终输出也会跟着慢下来。
+        raw_rate = section.get("rate")
+        if raw_rate is not None:
+            try:
+                rvc_rate = float(raw_rate)
+                if not (0.5 <= rvc_rate <= 2.0):
+                    reasons.append("`rvc.rate` 建议在 0.5~2.0 之间（现在是 {}）".format(rvc_rate))
+            except (TypeError, ValueError):
+                reasons.append("`rvc.rate` 不是数字：{!r}".format(raw_rate))
         model_path = _resolve(folder, section.get("model"))
         index_path = _resolve(folder, section.get("index"))
         if model_path is not None and not model_path.is_file():
@@ -364,6 +377,7 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
         base_voice=base_voice,
         rvc_model=resolved_model,
         rvc_index=resolved_index,
+        rvc_rate=rvc_rate,
         command=[str(part) for part in section.get("command")] if section.get("command") else None,
     )
 

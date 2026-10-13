@@ -27,6 +27,7 @@ RVC / DDSP-SVC 这类模型是**音频 → 音频**（声音转换），不能�
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -155,7 +156,13 @@ class RvcBackend:
             raise RuntimeError("rvc 后端尚未绑定注册表")
 
         # ① 先用基础音色把文本读出来
-        base_result = await self._registry.synth(base_voice, text, options)
+        #    音色包可以用 `rvc.rate` 调 **base 的语速** —— 这是「慵懒」的主要旋钮：
+        #    RVC 保留时间轴，所以源慢下来，最终输出也跟着慢（语气就松下来了）。
+        base_options = options
+        pack_rate = getattr(pack, "rvc_rate", None)
+        if pack_rate and abs(float(pack_rate) - options.rate) > 1e-3:
+            base_options = replace(options, rate=float(pack_rate))
+        base_result = await self._registry.synth(base_voice, text, base_options)
 
         # ② 再跑变声
         own_command = getattr(pack, "command", None)

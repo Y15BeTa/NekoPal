@@ -55,11 +55,13 @@ class FakeRegistry:
 
     def __init__(self, words=None, rate: int = 24000) -> None:
         self.calls = []
+        self.options_seen = []
         self.words = list(words or [])
         self.rate = rate
 
     async def synth(self, voice_id, text, options):
         self.calls.append((voice_id, text))
+        self.options_seen.append(options)
         data = target_wav_bytes(0.25, rate=self.rate)
         return SynthResult(
             audio=data,
@@ -257,6 +259,58 @@ def test_synth_result_default_sample_rate_when_unparsable():
     from nekopal.media import FALLBACK_SAMPLE_RATE, wav_sample_rate
 
     assert wav_sample_rate(b"not a wav at all") == FALLBACK_SAMPLE_RATE
+
+
+def test_pack_rate_overrides_the_base_synthesis_rate():
+    """`rvc.rate` 要作用在 **base 的合成**上 —— 语速是「慵懒」的主要旋钮。
+
+    RVC 保留时间轴，所以源慢下来，最终输出也跟着慢（这是刻意设计的）。
+    """
+
+    class PackWithRate(FakePack):
+        rvc_rate = 0.85
+
+    backend = RvcBackend(settings_with())
+    registry = FakeRegistry()
+    backend.attach(registry, lambda voice_id: PackWithRate())
+
+    asyncio.run(backend.synth("rvc:demo", "文本", SynthOptions(rate=1.0)))
+
+    assert registry.options_seen[0].rate == 0.85
+
+
+def test_without_pack_rate_the_request_rate_wins():
+    """包里没写 rate → 用请求里的（不改变既有行为）。"""
+
+    backend = RvcBackend(settings_with())
+    registry = FakeRegistry()
+    backend.attach(registry, lambda voice_id: FakePack())
+
+    asyncio.run(backend.synth("rvc:demo", "文本", SynthOptions(rate=0.9)))
+
+    assert registry.options_seen[0].rate == 0.9
+
+
+def test_attach_voice_packs_wires_the_rvc_backend():
+    """`attach_voice_packs` 必须**真的**把音色包查询接上。
+
+    漏掉的后果极其隐蔽：`RvcBackend` 找不到包 → 合成失败 →
+    `synthesize_sentence` **静默退回兜底音色** → 用户以为在听包音色，
+    其实听到的是 `say`（踩过：`nekopal export --voice rvc:rana` 导出成了 Tingting，
+    而且导出路径**没有任何提示**，是靠量音高才发现的）。
+    """
+
+    from nekopal.cli import attach_voice_packs
+    from nekopal.tts.registry import build_registry
+
+    registry = build_registry(
+        SimpleNamespace(rvc_command=["echo", "{input}", "{output}"], rvc_timeout=60.0)
+    )
+
+    attach_voice_packs(registry)
+
+    rvc = registry.get("rvc")
+    assert getattr(rvc, "_pack_source", None) is not None, "音色包查询没接上"
 
 
 def test_synth_errors_when_pack_missing():
