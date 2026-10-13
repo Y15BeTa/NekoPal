@@ -197,9 +197,21 @@ function mkSep() {
   return d;
 }
 
-function openMenu(builder) {
+/**
+ * 换一页：**先清空再画** ✗。
+ *
+ * ⚠️ 踩过：钻进子页时只写了 `menu.append(...)` ✗ —— 没清空 ✗ ——
+ * 于是每点一次「换装 / 动作 / 表情」✗，新一页就**叠**在旧内容下面 ✗，
+ * 最后菜单里 3 页全挤在一起（用户截图确认过 ✗）。
+ */
+function showPage(builder) {
   menu.textContent = '';
   builder();
+  reportHotRects(); // 菜单高度变了 → 可点区域要重报 ✗
+}
+
+function openMenu(builder) {
+  showPage(builder);
   menu.hidden = false;
   toNative('menu', { open: true }); // 告诉原生：菜单开着 ✗（关菜单要靠它 ✗）
   reportHotRects();
@@ -249,20 +261,22 @@ async function ensureAvatarInfo() {
 function buildRoot() {
   const o = currentOutfitInfo();
   log(
-    '菜单：形象 ' + (avatarInfo?.outfits?.length ?? 'null') +
-      ' 个 · 当前 ' + (o ? o.label : '?') +
-      ' · 动作组 ' + (o ? o.motions.length : '?') +
-      ' · 表情 ' + (o ? o.expressions.length : '?'),
+    '菜单：avatarInfo=' + (avatarInfo ? '有' : 'null ✗') +
+      ' · 形象 ' + (avatarInfo?.outfits?.length ?? '-') +
+      ' 个 · currentOutfit=' + (currentOutfit ?? '(未设) ✗') +
+      ' · 匹配到 ' + (o ? o.label : 'null ✗') +
+      ' · 动作组 ' + (o ? o.motions.length : '-') +
+      ' · 表情 ' + (o ? o.expressions.length : '-'),
   );
   menu.append(mkHead('猫伴 · ' + (o ? o.label : '')));
-  menu.append(mkButton('换装 ▸' + (o ? '  ' + o.label : ''), () => buildOutfits()));
+  menu.append(mkButton('换装 ▸' + (o ? '  ' + o.label : ''), () => showPage(buildOutfits)));
   menu.append(
-    mkButton('动作 ▸' + (o ? '  ' + o.motions.length + ' 组' : ''), () => buildMotions()),
+    mkButton('动作 ▸' + (o ? '  ' + o.motions.length + ' 组' : ''), () => showPage(buildMotions)),
   );
   menu.append(
     mkButton(
       '表情 ▸' + (o ? '  ' + o.expressions.length + ' 个' : ''),
-      () => buildExpressions(),
+      () => showPage(buildExpressions),
     ),
   );
   menu.append(mkSep());
@@ -286,7 +300,7 @@ function buildRoot() {
 }
 
 function buildOutfits() {
-  menu.append(mkButton('‹ 返回', () => buildRoot()));
+  menu.append(mkButton('‹ 返回', () => showPage(buildRoot)));
   menu.append(mkHead('换装（切过去会重新加载 ✗）'));
   const list = avatarInfo?.outfits || [];
   if (!list.length) menu.append(mkButton('（没有可选形象）', () => {}, { dim: true }));
@@ -302,7 +316,7 @@ function buildOutfits() {
 }
 
 function buildMotions() {
-  menu.append(mkButton('‹ 返回', () => buildRoot()));
+  menu.append(mkButton('‹ 返回', () => showPage(buildRoot)));
   menu.append(mkHead('动作'));
   const o = currentOutfitInfo();
   const groups = o?.motions || [];
@@ -322,7 +336,7 @@ function buildMotions() {
 }
 
 function buildExpressions() {
-  menu.append(mkButton('‹ 返回', () => buildRoot()));
+  menu.append(mkButton('‹ 返回', () => showPage(buildRoot)));
   menu.append(mkHead('表情'));
   const o = currentOutfitInfo();
   const list = o?.expressions || [];
