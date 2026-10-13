@@ -4,6 +4,7 @@
     nekopal up             一键启动（变声服务 + 后端 + 原生窗口）
     nekopal down           停掉窗口、后端与变声服务
     nekopal control toggle 远程暂停/继续（给全局快捷键用）
+    nekopal pet            打开置顶小条（点一下就暂停/继续）
     nekopal app            打开原生窗口（桌面外壳）
     nekopal open           在浏览器打开跟读窗
     nekopal read "文字"    命令行直接朗读（本机播放）
@@ -441,6 +442,19 @@ def _cmd_up(args: argparse.Namespace) -> int:
             stop_rvc_service(verbose=not args.quiet)
 
 
+def _cmd_pet(args: argparse.Namespace) -> int:
+    """打开置顶小条：点一下就暂停/继续（桌宠的第一步）。"""
+
+    from nekopal.desktop import run_pet
+
+    settings = load_settings()
+    if args.host:
+        settings.host = args.host
+    if args.port:
+        settings.port = args.port
+    return run_pet(settings, hidden=args.hidden)
+
+
 def _cmd_control(args: argparse.Namespace) -> int:
     """远程控制跟读窗（暂停 / 继续 / 停止 / 上下一句）—— 给**全局快捷键**用。
 
@@ -598,6 +612,11 @@ def build_parser() -> argparse.ArgumentParser:
     control_cmd.add_argument("--host", default=None)
     control_cmd.add_argument("--port", type=int, default=None)
 
+    pet_cmd = sub.add_parser("pet", help="打开置顶小条（点一下就暂停/继续）")
+    pet_cmd.add_argument("--host", default=None)
+    pet_cmd.add_argument("--port", type=int, default=None)
+    pet_cmd.add_argument("--hidden", action="store_true", help="不开窗，只做启动自检")
+
     auto = sub.add_parser("autostart", help="开机自启（macOS LaunchAgent）")
     auto.add_argument(
         "action", nargs="?", default="status", choices=["status", "install", "uninstall"]
@@ -618,6 +637,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "up": _cmd_up,
         "down": _cmd_down,
         "control": _cmd_control,
+        "pet": _cmd_pet,
         "open": _cmd_open,
         "read": _cmd_read,
         "voices": _cmd_voices,

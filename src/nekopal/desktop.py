@@ -26,6 +26,10 @@ from nekopal.config import Settings, load_settings
 
 WINDOW_TITLE = "NekoPal 猫伴"
 
+#: 置顶小条的标题与默认尺寸（够放一只猫 + 两个按钮）
+PET_TITLE = "猫伴"
+PET_SIZE = (236, 86)
+
 
 def backend_alive(base: str, timeout: float = 0.6) -> bool:
     """探测后端是否已在运行。
@@ -176,6 +180,65 @@ def spawn_backend(settings: Settings) -> subprocess.Popen:
         "warning",
     ]
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
+    """打开「置顶小条」：透明 / 无边框 / 全局置顶 / 可拖动。
+
+    这是**桌宠（角色层）的第一步** —— 先把「置顶窗口 + 点击控制」这套基础设施做出来，
+    等有 Live2D 模型后，同一个窗口就换成角色本体（设计文档 6.5 / 6.9）。
+
+    为什么它比全局快捷键更好：**它一直在那儿** —— 点一下就暂停/继续，
+    不用切窗口，也不用记组合键。而快捷键那套仍然保留作为备选。
+    """
+
+    try:
+        import webview
+    except ImportError:
+        print(
+            "缺少 pywebview。安装： uv pip install -e \".[desktop]\"",
+            file=sys.stderr,
+        )
+        return 1
+
+    settings = settings or load_settings()
+    base = "http://{}:{}".format(settings.host, settings.port)
+
+    child: Optional[subprocess.Popen] = None
+    if not backend_alive(base):
+        print("后端未运行，正在拉起…")
+        child = spawn_backend(settings)
+        for _ in range(60):
+            if backend_alive(base):
+                break
+            time.sleep(0.25)
+        else:
+            print("后端启动失败：请手动运行 `nekopal serve` 后再试。", file=sys.stderr)
+
+    width, height = PET_SIZE
+    webview.create_window(
+        PET_TITLE,
+        base + "/pet.html",
+        width=width,
+        height=height,
+        frameless=True,     # 无边框
+        transparent=True,   # 透明背景（桌宠的根基）
+        on_top=True,        # 全局置顶：别的窗口盖不住它
+        easy_drag=True,     # 拖哪儿都能挪
+        resizable=False,
+        hidden=hidden,
+    )
+
+    try:
+        webview.start(
+            private_mode=False,
+            storage_path=str(settings.cache_dir / "webview"),
+        )
+    finally:
+        if child is not None and child.poll() is None:
+            child.terminate()
+
+    return 0
 
 
 def run_app(

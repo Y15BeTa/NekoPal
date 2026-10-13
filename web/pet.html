@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>猫伴</title>
+  <link rel="stylesheet" href="pet.css">
+</head>
+<body>
+  <!-- 置顶小条：透明、无边框、一直在最上面。点 ⏯ 就能暂停/继续。 -->
+  <div class="pet">
+    <div class="cat">🐱</div>
+    <div class="info">
+      <div class="title">猫伴</div>
+      <div class="hint">点 ⏯ 暂停 / 继续</div>
+    </div>
+    <div class="actions">
+      <button id="toggle" title="暂停 / 继续">⏯</button>
+      <button id="stop" title="停止">⏹</button>
+      <button id="close" title="关掉这个小条">✕</button>
+    </div>
+  </div>
+  <script src="pet.js" type="module"></script>
+</body>
+</html>

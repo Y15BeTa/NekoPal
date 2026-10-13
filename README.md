@@ -104,6 +104,7 @@ uv pip install -e ".[edge,dev,desktop]"   # desktop = 原生窗口外壳；不�
 | 方式 | 命令 | 特点 |
 | --- | --- | --- |
 | **应用**（推荐） | `install_macos_apps.sh` | 双击即用；**关窗即全关** |
+| **置顶小条** | `nekopal pet` | 透明置顶小卡片，**点一下就暂停/继续**（桌宠的第一步） |
 | 双击脚本 | `启动猫伴.command` | 不装 App 也能用；会闪一个终端窗口 |
 | 一键启动 | `nekopal up` | 命令行版，同样是「**关窗即全关**」 |
 | 只要窗口 | `nekopal app` | 自动拉起后端（不含变声服务） |
@@ -272,6 +273,11 @@ uv run python scripts/push.py --file 讲义.md --voice edge:zh-CN-XiaoxiaoNeural
 
 **为什么需要它**：NekoPal 通常在**另一个窗口**里 —— opencode 全屏时切过去很麻烦。
 所以控制入口**不依赖窗口聚焦**：命令发给后端，后端再广播给跟读窗。
+
+> 🐱 **更省事的办法：置顶小条** —— `nekopal pet`
+> 一个**透明、无边框、全局置顶**的小卡片，点一下 `⏯` 就暂停/继续。
+> 它一直在最上面，所以**不用切窗口、也不用记快捷键**。
+> （这条就是「桌宠」的第一步；等有 Live2D 模型后，同一个窗口会换成角色本体。）
 
 ```bash
 nekopal control toggle     # 暂停 / 继续（来回切）

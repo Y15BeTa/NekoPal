@@ -1,0 +1,87 @@
+/* 置顶小条的样式：窗口本身是透明的，只留这张圆角卡片。 */
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent; /* 关键：让窗口的透明透出来 */
+  overflow: hidden;
+  font: 12px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.pet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 5px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(38, 34, 44, 0.82);
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.cat {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.info {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.hint {
+  opacity: 0.72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.actions {
+  display: flex;
+  gap: 4px;
+}
+
+button {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+button:active {
+  transform: scale(0.94);
+}
+
+#close:hover {
+  background: rgba(255, 90, 90, 0.65);
+}
+
+/* 没有跟读窗连着时变灰 —— 一眼看出"为什么点了没反应" */
+.pet.offline .cat {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+.pet.offline .hint {
+  color: #ffb4b4;
+}
