@@ -97,14 +97,39 @@ export class Reader {
     this.started = false;
     this.missing.clear();
 
+    this._renderRange(sentences, 0);
+  }
+
+  /**
+   * 追加句子（Follow 边写边读）。
+   *
+   * 关键：**只往后接** —— 不动已有的 DOM、不碰当前的播放位置。
+   * 用 setPlan 会清空容器，正在念的内容就没了。
+   */
+  appendPlan(sentences, startIndex = this.sentences.length) {
+    if (!sentences || !sentences.length) return;
+
+    // 首帧可能是空的（流式：还没有"定稿"的句子）→ 这时把它当初始计划处理
+    if (!this.sentences.length && startIndex === 0) {
+      this._renderRange(sentences, 0);
+      return;
+    }
+
+    this._renderRange(sentences, Math.max(0, startIndex));
+    this.done = false; // 又来了新内容
+  }
+
+  _renderRange(sentences, startIndex) {
     const frag = document.createDocumentFragment();
-    sentences.forEach((text, index) => {
+    sentences.forEach((text, offset) => {
+      const index = startIndex + offset;
       const el = document.createElement('p');
       el.className = 'sentence';
       el.dataset.i = String(index);
       el.textContent = text;
       frag.appendChild(el);
-      this.sentenceEls.push(el);
+      this.sentenceEls[index] = el;
+      this.sentences[index] = text;
     });
     this.container.appendChild(frag);
   }

@@ -300,8 +300,21 @@ function subscribe(taskId, startIndex) {
 
   stream.addEventListener('plan', (event) => {
     const data = JSON.parse(event.data);
-    reader.setPlan(data.sentences.map((s) => s.text), startIndex);
-    setStatus('文本已就绪（' + data.sentences.length + ' 句），正在合成…');
+    const sentences = data.sentences.map((s) => s.text);
+
+    if (data.append) {
+      // Follow（边写边读）：只把新句子接在后面，不打断正在念的内容
+      reader.appendPlan(sentences, data.sentences[0]?.i ?? reader.sentences.length);
+      setStatus('又接上 ' + sentences.length + ' 句，继续念…');
+      return;
+    }
+
+    reader.setPlan(sentences, startIndex);
+    setStatus(
+      sentences.length
+        ? '文本已就绪（' + sentences.length + ' 句），正在合成…'
+        : '正在等对方写第一句…'
+    );
   });
 
   stream.addEventListener('segment', (event) => {

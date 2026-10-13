@@ -17,7 +17,7 @@ from nekopal.core import export as audio_export
 from nekopal.core.export import ExportError, available_formats, missing_tool
 from nekopal.core.models import SynthOptions
 from nekopal.core.pipeline import prepare_sentences, synthesize_sentence
-from nekopal.server.schemas import InvalidRequest, parse_read_request
+from nekopal.server.schemas import InvalidRequest, parse_append_request, parse_read_request
 from nekopal.server.state import Runtime
 
 
@@ -227,7 +227,14 @@ def build_router(runtime: Runtime) -> APIRouter:
             fallback_voice=runtime.tts.resolve_voice_id(
                 runtime.settings.fallback_voice, fallback=None
             ),
+            # 「边写边读」：请求里声明 follow，且服务端没关掉它（设计文档 6.11）
+            streaming=bool(req.options.get("follow")) and runtime.settings.follow,
         )
+        if task.streaming:
+            # 首帧文本也走同一条"只收已定稿句子"的路：
+            # 最后一句可能还在长，先留着 —— 否则它一变大就会被判成"前文被改写"。
+            task.append(req.text, final=False, default_clean=runtime.settings.clean)
+            task.stream.take_announcements()  # 这一批由首帧 plan 播报
         task.start(runtime.tts, runtime.cache)
         if fingerprint:
             runtime.remember_read(fingerprint, task.id)
@@ -299,13 +306,35 @@ def build_router(runtime: Runtime) -> APIRouter:
             )
         return FileResponse(str(segment.path), media_type=segment.media_type)
 
-    # -- 预留：Phase 2 / Phase 3（设计文档 4.2）-------------------------
+    # -- Follow：边写边读（设计文档 6.11）--------------------------------
     @router.post("/read/{task_id}/append")
-    async def append(task_id: str) -> dict:
-        raise HTTPException(
-            501,
-            {"code": "NOT_IMPLEMENTED", "message": "自动续读（Follow）将在 Phase 2 提供"},
+    async def append(task_id: str, request: Request) -> dict:
+        """把「消息到目前为止的全文」并进正在朗读的任务。
+
+        后端自己算增量（`core/append.py`）：**重复发同一份不会有副作用**。
+        ``final: true`` 表示这一轮生成结束。返回一个小报告便于调试。
+        """
+
+        task = runtime.tasks.get(task_id)
+        if task is None:
+            raise HTTPException(
+                404,
+                {"code": "TASK_NOT_FOUND", "message": "任务不存在（可能已被回收）"},
+            )
+
+        data = await _json(request)
+        try:
+            payload = parse_append_request(data)
+        except InvalidRequest as exc:
+            raise _invalid(str(exc)) from exc
+
+        report = task.append(
+            payload["text"],
+            final=payload["final"],
+            default_clean=runtime.settings.clean,
         )
+        runtime.record("append", task_id=task_id, source="follow", **report)
+        return report
 
     @router.post("/export")
     async def export(request: Request) -> dict:

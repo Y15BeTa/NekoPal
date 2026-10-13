@@ -155,6 +155,149 @@ async function push(text: string, sessionID: string): Promise<void> {
  */
 void report("module-loaded", { base: BASE, minChars: MIN_CHARS });
 
+// ---------------------------------------------------------------------------
+// Follow（边写边读）
+// ---------------------------------------------------------------------------
+//
+// 实测负载形状（2026-10-13 用 /api/activity 采集，不是猜的）：
+//   session.text.started → { sessionID, assistantMessageID, ordinal }
+//   session.text.delta   → { ..., ordinal, delta }        ← 按 token 增量
+//   session.text.ended   → { ..., ordinal, text }         ← 该段**完整**文本
+//
+// 设计取舍：
+//   · 插件**只发"消息到目前为止的全文"**，增量由服务端算（`core/append.py`）——
+//     这样客户端可以放心重发、乱序发，服务端只认最长公共前缀。
+//   · **必须节流**：delta 是按 token 来的，每个都发会把服务端淹掉；
+//     这里合并成每 600ms 最多一次，且**段结束（text.ended）立刻发**。
+//   · **兜底**：如果这一轮压根没收到 text 事件（老版本 opencode？），
+//     收尾时仍走原来那条「整篇生成完再念」的老路。
+
+const FOLLOW = process.env.NEKOPAL_FOLLOW !== "0";
+const FOLLOW_THROTTLE_MS = Number(process.env.NEKOPAL_FOLLOW_THROTTLE ?? 600);
+
+interface FollowState {
+  /** ordinal → 该段文本 */
+  parts: Map<number, string>;
+  messageID: string;
+  taskID?: string;
+  sent: string;
+  timer?: ReturnType<typeof setTimeout>;
+  /** 这一轮是否真的走了流式路径（没走 → 收尾时退回老逻辑） */
+  streamed: boolean;
+}
+
+const followers = new Map<string, FollowState>();
+
+function followText(state: FollowState): string {
+  return [...state.parts.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, text]) => text)
+    .join("\n\n")
+    .trim();
+}
+
+function stateFor(sessionID: string, messageID: string): FollowState {
+  let state = followers.get(sessionID);
+  // 换了消息就重开一轮（上一条没收到 final 也没关系，服务端有空闲兜底）
+  if (!state || (messageID && state.messageID && state.messageID !== messageID)) {
+    if (state?.timer) clearTimeout(state.timer);
+    state = { parts: new Map(), messageID, sent: "", streamed: false };
+    followers.set(sessionID, state);
+  }
+  if (messageID) state.messageID = messageID;
+  return state;
+}
+
+async function startFollow(text: string, sessionID: string): Promise<string | undefined> {
+  const response = await fetch(`${BASE}/api/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      source: { kind: "block", app: "opencode", session_id: sessionID },
+      options: { follow: true },
+    }),
+  });
+  if (!response.ok) {
+    await report("follow-start-failed", { sessionID, status: response.status });
+    return undefined;
+  }
+  const body = await response.json().catch(() => ({}));
+  await report("follow-start", { sessionID, taskID: body?.task_id ?? null });
+  return body?.task_id as string | undefined;
+}
+
+async function appendFollow(taskID: string, text: string, final: boolean): Promise<void> {
+  const response = await fetch(`${BASE}/api/read/${taskID}/append`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, final }),
+  });
+  if (!response.ok) {
+    await report("follow-append-failed", { taskID, status: response.status });
+    return;
+  }
+  const body = await response.json().catch(() => ({}));
+  if (body?.conflict) {
+    // 前文被改写 → 服务端刻意不追加（已念出去的收不回来）
+    await report("follow-conflict", { taskID, total: body?.total });
+  } else if (body?.appended) {
+    await report("follow-append", { taskID, appended: body.appended, total: body.total });
+  }
+}
+
+async function flushFollow(state: FollowState, sessionID: string, final: boolean): Promise<void> {
+  if (state.timer) {
+    clearTimeout(state.timer);
+    state.timer = undefined;
+  }
+  const text = followText(state);
+  if (!text) return;
+  if (!final && text === state.sent) return; // 没变就不发
+  if (!final && text.length < MIN_CHARS) return; // 与老行为一致：太短不开口
+
+  try {
+    if (!state.taskID) {
+      const taskID = await startFollow(text, sessionID);
+      if (!taskID) return;
+      state.taskID = taskID;
+    } else {
+      await appendFollow(state.taskID, text, final);
+    }
+    state.streamed = true;
+    state.sent = text;
+  } catch (error) {
+    await report("follow-failed", { sessionID, message: String(error).slice(0, 200) });
+  }
+}
+
+/** 处理 session.text.* —— 累积文本，按需节流推送。 */
+function handleTextEvent(type: string, data: AnyRecord): void {
+  if (!FOLLOW) return;
+  const sessionID = typeof data?.sessionID === "string" ? data.sessionID : undefined;
+  if (!sessionID) return;
+  const messageID = typeof data?.assistantMessageID === "string" ? data.assistantMessageID : "";
+  const ordinal = Number.isInteger(data?.ordinal) ? (data.ordinal as number) : 0;
+  const state = stateFor(sessionID, messageID);
+
+  if (type === "session.text.delta" && typeof data?.delta === "string") {
+    state.parts.set(ordinal, (state.parts.get(ordinal) ?? "") + data.delta);
+  } else if (type === "session.text.ended" && typeof data?.text === "string") {
+    state.parts.set(ordinal, data.text); // 以服务端的完整文本为准
+  } else {
+    return; // text.started：只用来建状态
+  }
+
+  if (type === "session.text.ended") {
+    void flushFollow(state, sessionID, false); // 段结束，立刻发
+    return;
+  }
+  if (!state.timer) {
+    state.timer = setTimeout(() => void flushFollow(state, sessionID, false), FOLLOW_THROTTLE_MS);
+  }
+}
+
+
 export default {
   id: "nekopal",
 
@@ -176,6 +319,12 @@ export default {
         }
         if (DEBUG) console.log("[nekopal] event:", type);
 
+        // Follow（边写边读）：text.* 事件不在触发词表里，单独处理
+        if (typeof type === "string" && type.startsWith("session.text.")) {
+          handleTextEvent(type, ((event as AnyRecord)?.data ?? {}) as AnyRecord);
+          continue;
+        }
+
         if (typeof type !== "string" || !TRIGGER.test(type)) continue;
 
         const payload = (event as AnyRecord).data ?? (event as AnyRecord).properties ?? event;
@@ -188,6 +337,14 @@ export default {
         }
 
         try {
+          // Follow 这一轮已经「边写边念」过了 → 收尾（final）即可，别再整篇推一次
+          const follow = followers.get(sessionID);
+          if (follow && follow.streamed) {
+            await flushFollow(follow, sessionID, true);
+            followers.delete(sessionID);
+            continue;
+          }
+
           const messages = ((await ctx.session.context({ sessionID })) ?? []) as AnyRecord[];
           const answer = latestReadableAnswer(messages);
           if (!answer) {

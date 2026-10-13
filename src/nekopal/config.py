@@ -76,6 +76,10 @@ class Settings:
     # 预合成队列的前瞻段数（设计文档 5.4）
     prefetch: int = 3
 
+    #: 「边写边读」（Follow，设计文档 6.11）：客户端流式推送全文时，边收边念。
+    #: 关掉它就退化成老行为 —— 整篇生成完再念。
+    follow: bool = True
+
     #: 同一内容源在这么短时间内重复推送同一段文本，视为重复触发（插件被加载多实例）
     dedupe_window: float = 10.0
 
@@ -104,6 +108,7 @@ class Settings:
             "rate": self.rate,
             "auto_scroll": self.auto_scroll,
             "prefetch": self.prefetch,
+            "follow": self.follow,
             "dedupe_window": self.dedupe_window,
             "export_dir": str(self.export_dir),
             "export_gap": self.export_gap,
@@ -125,6 +130,12 @@ def load_settings() -> Settings:
     s.rate = _env_float("NEKOPAL_RATE", s.rate)
     s.prefetch = max(1, _env_int("NEKOPAL_PREFETCH", s.prefetch))
     s.dedupe_window = _env_float("NEKOPAL_DEDUPE_WINDOW", s.dedupe_window)
+    s.follow = _env("NEKOPAL_FOLLOW", "1" if s.follow else "0").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
     s.export_dir = Path(_env("NEKOPAL_EXPORT_DIR", str(s.export_dir)))
     s.export_gap = _env_float("NEKOPAL_EXPORT_GAP", s.export_gap)
     s.export_format = _env("NEKOPAL_EXPORT_FORMAT", s.export_format)

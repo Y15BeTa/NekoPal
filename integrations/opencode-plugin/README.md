@@ -37,6 +37,35 @@ uv run nekopal serve            # 默认 http://127.0.0.1:8787
 
 之后每次会话结束，跟读窗就会自动开始念。
 
+## 边写边读（Follow）✅
+
+**默认开启**：助手**一边写、NekoPal 一边念**，不用等整篇生成完。
+
+实测事件链（2026-10-13 用 `/api/activity` 采集，**不是猜的**）：
+
+```
+session.text.started → { sessionID, assistantMessageID, ordinal }
+session.text.delta   → { ..., ordinal, delta }     ← 按 token 的增量
+session.text.ended   → { ..., ordinal, text }      ← 该段的完整文本
+session.execution.succeeded                        ← 一轮收尾（老流程的触发点）
+```
+
+设计要点：
+
+- 插件**只发「消息到目前为止的全文」**，增量由服务端算（`core/append.py`）——
+  所以重复发、乱序发都没关系，服务端只认最长公共前缀。
+- **必须节流**：`delta` 是按 token 来的，每个都发会把服务端淹掉。
+  这里合并成每 600ms 最多一次，且**段结束（`text.ended`）立刻发**。
+- **兜底**：如果这一轮压根没收到 `text.*` 事件（老版本 opencode？），
+  收尾时仍走原来那条「整篇生成完再念」的老路。
+
+| 环境变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `NEKOPAL_FOLLOW` | `1` | 设 `0` 退回「整篇生成完再念」 |
+| `NEKOPAL_FOLLOW_THROTTLE` | `600` | 节流间隔（毫秒） |
+
+排查：`GET /api/activity` 里能看到 `follow-start` / `follow-append` / `follow-conflict` / `follow-failed`。
+
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
