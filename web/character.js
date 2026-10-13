@@ -232,8 +232,23 @@ function closeMenu() {
  */
 window.__nekopalCloseMenu = () => closeMenu();
 
+/**
+ * 当前角色（`/api/avatar` 的结构是 `characters[{id, outfits[]}]` ✗）。
+ *
+ * ⚠️ **踩过**：菜单里我曾读 `avatarInfo.outfits` ✗ —— 那是**顶层**，
+ *    而 `outfits` 其实在 **`characters[i]`** 里面 ✗ → 永远读到空 ✗
+ *    → 菜单里换装/动作/表情全显示「没有素材」✗（明明数据到了 ✗）。
+ *    以后取形象一律走这里 ✗。
+ */
+function activeCharacter() {
+  const list = avatarInfo?.characters || [];
+  const id = avatarInfo?.active_character || avatarInfo?.active;
+  return list.find((c) => c.id === id) || list[0] || null;
+}
+
 function currentOutfitInfo() {
-  return (avatarInfo?.outfits || []).find((o) => o.folder === currentOutfit) || null;
+  const c = activeCharacter();
+  return (c?.outfits || []).find((o) => o.folder === currentOutfit) || null;
 }
 
 /**
@@ -246,8 +261,8 @@ function currentOutfitInfo() {
  */
 async function ensureAvatarInfo() {
   // ⚠️ 注意判 length ✗：空数组 `[]` 是 **truthy** ✗，
-  //    写成 `if (avatarInfo?.outfits)` 的话永远不重取 ✗（踩过）
-  if (avatarInfo?.outfits?.length) return avatarInfo;
+  //    写成 `if (activeCharacter()?.outfits)` 的话永远不重取 ✗（踩过）
+  if (activeCharacter()?.outfits?.length) return avatarInfo;
   try {
     // ⚠️ `cache:'no-store'` —— 后端现在也发了 no-store ✗，
     //    但这里再写一道更保险 ✗（之前就是被启发式缓存坑了很久 ✗）
@@ -270,7 +285,7 @@ function buildRoot() {
   const o = currentOutfitInfo();
   log(
     '菜单：avatarInfo=' + (avatarInfo ? '有' : 'null ✗') +
-      ' · 形象 ' + (avatarInfo?.outfits?.length ?? '-') +
+      ' · 形象 ' + (activeCharacter()?.outfits?.length ?? '-') +
       ' 个 · currentOutfit=' + (currentOutfit ?? '(未设) ✗') +
       ' · 匹配到 ' + (o ? o.label : 'null ✗') +
       ' · 动作组 ' + (o ? o.motions.length : '-') +
@@ -310,7 +325,7 @@ function buildRoot() {
 function buildOutfits() {
   menu.append(mkButton('‹ 返回', () => showPage(buildRoot)));
   menu.append(mkHead('换装（切过去会重新加载 ✗）'));
-  const list = avatarInfo?.outfits || [];
+  const list = activeCharacter()?.outfits || [];
   log(
     '换装页：' + list.length + ' 项' +
       (list.length ? ' → ' + list.map((o) => o.label).join(' / ') : ' ❌ 空 ✗'),
@@ -500,6 +515,18 @@ async function boot() {
       ' · 清单 ' + (active.outfits || []).map((x) => x.label).join(' / '),
   );
 
+  // 🔎 自检：**用菜单那条路径**再取一次（menu 用的是 activeCharacter() ✗）
+  //    这样不用点菜单，日志就能证明"菜单里会有东西" ✅
+  const menuChar = activeCharacter();
+  const menuOutfit = currentOutfitInfo();
+  log(
+    '菜单自检：activeCharacter=' + (menuChar ? menuChar.id : 'null ✗') +
+      ' · outfits=' + (menuChar?.outfits?.length ?? '无 ✗') +
+      ' · currentOutfit匹配到=' + (menuOutfit ? menuOutfit.label : 'null ✗') +
+      ' · 动作组=' + (menuOutfit?.motions.length ?? '-') +
+      ' · 表情=' + (menuOutfit?.expressions.length ?? '-'),
+  );
+
   const url = chosen ? '/api/avatar/' + avatarInfo.active + '/' + chosen.path : active.url;
   try {
     await mountModel(url);
@@ -525,7 +552,7 @@ async function pollUi() {
       return;
     }
     if (ui.outfit && ui.outfit !== currentOutfit) {
-      const o = (avatarInfo?.outfits || []).find((x) => x.folder === ui.outfit);
+      const o = (activeCharacter()?.outfits || []).find((x) => x.folder === ui.outfit);
       if (o) await switchOutfit(o);
     }
   } catch (err) {
