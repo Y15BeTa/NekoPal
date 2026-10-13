@@ -93,10 +93,12 @@ body:not(.native) .actions:hover {
 }
 
 /*
- * 按钮：macOS **控制中心**那套配色 —— 浅色毛玻璃底 + **深色图标**。
- * 为什么不是"深底白字"或"浅底白字"：那两种的对比度都**跟着壁纸变** ✗
- * （用户实测：浅色毛玻璃 + 白图标 + 阴影 → 糊成一团，看不出是什么）。
- * 把底做得够实（0.66）+ 图标用深色 → 任何壁纸上对比度都稳 ✅
+ * 按钮：**浅底 + 天蓝色图标**。
+ *
+ * 关于对比度（踩过的坑）：之前试过"浅色毛玻璃 + 白图标 + 阴影"，
+ * 结果在任何壁纸上都糊成一团 ✗。所以图标必须**比底色深**才认得出。
+ * 天蓝色取 #039BE5（Material Light Blue 600）—— 是"天蓝"，又不至于飘到看不见。
+ * 底色做得更透（0.42）+ 更强的模糊（18px）：模糊够强时，透一点也还是能看清。
  */
 .actions button {
   display: flex;
@@ -106,19 +108,19 @@ body:not(.native) .actions:hover {
   height: 34px;
   border: 0.5px solid rgba(255, 255, 255, 0.85);
   border-radius: 50%;
-  background: rgba(248, 248, 250, 0.66);
-  color: #202124; /* 深色图标 —— 对比度的关键 */
+  background: rgba(252, 252, 255, 0.42); /* 比之前更透 */
+  color: #039be5; /* 天蓝色图标 */
   cursor: pointer;
   box-shadow:
-    0 2px 9px rgba(0, 0, 0, 0.22),
+    0 2px 9px rgba(0, 0, 0, 0.18),
     inset 0 0.5px 0 rgba(255, 255, 255, 0.7);
-  -webkit-backdrop-filter: blur(14px) saturate(170%);
-  backdrop-filter: blur(14px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
   transition: background 0.15s ease, transform 0.12s ease;
 }
 
 .actions button:hover {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .actions button:active {
@@ -135,6 +137,8 @@ body:not(.native) .actions:hover {
   display: block;
   width: 19px;
   height: 19px;
+  /* 极淡的白色光晕：深色壁纸上图标也能"浮"出来一点 */
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.85));
 }
 
 .actions svg path,
