@@ -238,8 +238,21 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
   // ⇒ 最干净的做法：**模型矩阵保持单位矩阵**（完全不动模型），
   //   让 view 的逻辑矩形**正好框住角色的包围盒**，并按窗口比例外扩。
   //   这样：等比 ✅ 自动居中 ✅ 尽量大 ✅ 一个 API 坑都不踩 ✅
+  // ⚠️ **必须先 update 一次再量包围盒** ✗
+  //    `getDrawableVertexPositions` 给的是「上一帧算好的顶点」——
+  //    挂载时还没跑过任何一帧，量到的是空/过期数据 → 框出一个错的框 ✗
+  //    （症状：角色缩成一小团、还偏在角落 —— 用户实测截图确认过）
+  model.update();
+
+  // 把**所有尺寸数字**都打出来：变形问题只能靠数字定位 ✗
+  log(
+    '尺寸：canvas attr ' + canvas.width + '×' + canvas.height +
+      ' · canvas CSS ' + canvas.clientWidth + '×' + canvas.clientHeight +
+      ' · dpr ' + (window.devicePixelRatio || 1) +
+      ' · window ' + window.innerWidth + '×' + window.innerHeight,
+  );
+
   const canvasAspect = canvas.width / canvas.height;
-  const view = new CubismViewMatrix();
 
   const b = modelBounds();
   const bw = b.x1 - b.x0;
@@ -247,29 +260,40 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
   const cx = (b.x0 + b.x1) / 2;
   const cy = (b.y0 + b.y1) / 2;
 
-  let hw = bw / 2;
-  let hh = bh / 2;
-  // 按窗口比例把框外扩（保证逻辑矩形和 viewport 比例一致 → 绝不变形 ✗）
-  if (bw / bh > canvasAspect) {
-    hh = hw / canvasAspect;
-  } else {
-    hw = hh * canvasAspect;
+  // 可视范围（**模型坐标系**里的宽高）
+  // ⚠️ 关键：finalW/finalH 的比值**必须等于 canvas 的宽高比** → 否则就是横向拉扁 ✗
+  let visW = (bh / FIT) * canvasAspect; // 先按高度填满
+  let visH = bh / FIT;
+  if (visW < bw / FIT) {
+    // 她比窗口"胖" → 改成按宽度填满（宁可上下留白，也不裁人 ✗）
+    visW = bw / FIT;
+    visH = visW / canvasAspect;
   }
-  hw /= FIT; // FIT = 留边距（0.95 → 角色占 95%）
-  hh /= FIT;
 
-  view.setScreenRect(cx - hw, cx + hw, cy - hh, cy + hh);
+  const sx = 2 / visW;
+  const sy = 2 / visH;
 
-  // 模型矩阵：单位矩阵（不做任何变换）
+  // NDC_x = sx·(x-cx)，NDC_y = sy·(y-cy)
+  // CubismMatrix44 是列主序、平移在第 4 列；translate() 在缩放之后调用，
+  // 于是实际平移是 sx·(-cx)、sy·(-cy) —— 正是我们要的 ✅
   const modelMatrix = new CubismMatrix44();
+  modelMatrix.scale(sx, sy);
+  modelMatrix.translate(-cx, -cy);
 
   log(
     '缩放：角色包围盒 ' + bw.toFixed(3) + '×' + bh.toFixed(3) +
       '（比例 ' + (bw / bh).toFixed(3) + '）· 画布 ' +
       model.getCanvasWidth() + '×' + model.getCanvasHeight() +
-      ' · 逻辑框 ' + (2 * hw).toFixed(3) + '×' + (2 * hh).toFixed(3) +
-      '（' + (hw / hh).toFixed(3) + '）· 窗口 ' + canvasAspect.toFixed(3) +
-      ' · 边距 ' + FIT,
+      '（' + (model.getCanvasWidth() / model.getCanvasHeight()).toFixed(3) + '）' +
+      ' · 可视 ' + visW.toFixed(3) + '×' + visH.toFixed(3) +
+      '（' + (visW / visH).toFixed(3) + '）· canvas 宽高比 ' +
+      canvasAspect.toFixed(3) +
+      ' · 缩放 ' + sx.toFixed(3) + '/' + sy.toFixed(3) + ' · 边距 ' + FIT,
+  );
+  log(
+    '包围盒四角 x[' + b.x0.toFixed(3) + ',' + b.x1.toFixed(3) + '] y[' +
+      b.y0.toFixed(3) + ',' + b.y1.toFixed(3) + '] 中心(' +
+      cx.toFixed(3) + ',' + cy.toFixed(3) + ')',
   );
 
   /** 量出角色真正占了多大（画布往往比角色宽 ✗，按画布缩放会显得又小又细 ✗） */
@@ -457,9 +481,9 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
+      // 手写矩阵：**直接就是它**（不再有 view 那一层 ✗）
       const mvp = new CubismMatrix44();
-      mvp.setMatrix(view.getArray());
-      mvp.multiplyByMatrix(modelMatrix);
+      mvp.setMatrix(modelMatrix.getArray());
       renderer.setMvpMatrix(mvp);
       renderer.drawModel(opts.shaderBase);
     } catch (err) {
