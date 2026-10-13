@@ -32,11 +32,17 @@ if [ ! -x "$ROOT/.venv/bin/nekopal" ]; then
   exit 1
 fi
 
-# 已经在跑 → 什么都不做（窗口若已开着就保持原样）
-if curl -sf --max-time 1 http://127.0.0.1:8787/api/health >/dev/null 2>&1; then
-  echo "NekoPal 已在运行（无需重复启动）" | tee -a "$LOG"
+# ⚠️ 判断"是否已经在运行"要看**窗口进程**，不能看"后端在不在"。
+#    后端可能是别的方式起的（手动 nohup / 上一次没关干净），
+#    那时窗口并没有开 —— 用后端来判断会导致"App 拒绝开窗、什么也听不到"（踩过）。
+window_running() {
+  pgrep -f "nekopal up" >/dev/null 2>&1 || pgrep -f "nekopal app" >/dev/null 2>&1
+}
+
+if window_running; then
+  echo "NekoPal 窗口已经在运行（无需重复打开）" | tee -a "$LOG"
   exit 0
 fi
 
-# 上游全部委托给 CLI：变声服务 → 后端 → 窗口
+# 上游全部委托给 CLI：变声服务 → 后端（已在跑就复用）→ 窗口
 exec "$ROOT/.venv/bin/nekopal" up

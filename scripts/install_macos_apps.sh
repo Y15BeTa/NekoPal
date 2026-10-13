@@ -79,12 +79,11 @@ cat > "$TMP/NekoPal.applescript" <<'APPLESCRIPT'
 on run
 	set root to "__ROOT__"
 
-	-- 已经在跑就别重复开（也避免把正在进行的会话弄乱）
-	try
-		do shell script "/usr/bin/curl -sf --max-time 1 http://127.0.0.1:8787/api/health > /dev/null"
-		display dialog "NekoPal 已经在运行啦～" buttons {"好"} default button 1 with icon note
-		return
-	end try
+	-- ⚠️ 这里**故意不做**「后端在跑就退出」的判断（踩过）：
+	--    后端可能是别的方式起的（我手动 nohup / 上次没关干净），那时**窗口并没有开**，
+	--    用后端判断会导致「App 弹一句『已经在运行』就退出、用户什么都听不到」。
+	--    「是不是已经在运行」交给与它等价的内联命令去看**窗口进程**。
+	--    （那段逻辑在 scripts/launch.sh 的 window_running()，两边要一起改）
 
 	-- 与 scripts/launch.sh 等价的**内联**命令：
 	--   · 双击 App 时环境极简，所以自己把 ~/.zshrc 里的 SDKROOT / NEKOPAL_* 捞出来
@@ -97,6 +96,9 @@ on run
 	--         sh: /tmp/nekopal/launch.log: No such file or directory
 	--   ③ 采用「mkdir 在最外 + **整组**加重定向」：这样目录一定先建好，
 	--      而且**命令链中途失败也会被记进日志**（否则失败时连日志都没有，只能靠猜）
+	-- ⚠️ 这里**故意不做**"后端在跑就退出"的判断：
+	--    后端可能是别的方式起的（手动 nohup / 上次没关干净），那时窗口并没有开。
+	--    "是否已经在运行"交给 scripts/launch.sh 看**窗口进程**来判断。
 	set shellCmd to "mkdir -p \"$HOME/Library/Logs/NekoPal\"; { cd " & quoted form of root & " && eval \"$(grep -E '^export (SDKROOT|NEKOPAL_)' \"$HOME/.zshrc\" 2>/dev/null)\" && exec " & quoted form of (root & "/.venv/bin/nekopal") & " up; } >> \"$HOME/Library/Logs/NekoPal/launch.log\" 2>&1"
 
 	-- 前台运行：窗口开着时 App 显示为「运行中」（Dock 图标 / ⌘Tab 都能找到它），
