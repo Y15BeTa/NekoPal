@@ -54,6 +54,8 @@ export interface PetHandle {
   height: number;
   /** 点一下角色时调它 —— 随机播一个非待机动作 */
   playReaction(): boolean;
+  /** 眨一次眼 */
+  blink(): boolean;
   destroy(): void;
 }
 
@@ -182,10 +184,8 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
   // 动作有没有在播 —— 眼眨要靠它决定"别在动的时候眨眼"（官方做法）
   let motionUpdated = false;
 
-  // 眼眨：这个形象虽然报了 2 个参数，但 CubismEyeBlink 内部还是拿到 null id，
-  // 一跑就在 updater 里抛错、**把整个帧循环带停** ✗。它只是装饰，先不挂 ✗
-  // （真想要的话得去查 Groups/EyeBlink 的 Ids 写法，属于后面的事）
-  log('眨眼：跳过（该形象的 Groups/EyeBlink 解析不出 id ✗）');
+  // 眼眨：**自己实现**（见下面的 updateBlink），不用框架那个会炸的 ✗
+  log('眨眼：自己实现 ✅（参数个数见下面的「特效 id」）');
 
   // ⚠️ 参数 id 必须是 CubismFramework.getIdManager().getId(...) 的产物，
   //    不能直接塞字符串 —— 否则呼吸完全不生效（而且不报错 ✗）
@@ -265,17 +265,12 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
         if (!file) continue;
         const buf = await fetchBuffer(joinUrl(dir, file));
         if (!buf) continue;
-        // loadMotion 要一串参数；group/index/setting 传对，动作里的曲线 id 才解析得准
+        // ⚠️ **不传 modelSetting**：模型设里那个 Groups/EyeBlink 解析不出 id，
+        //    传进去会让 motion 内部抱着 null id，跑到 updateMotion 就炸 ✗
+        //    （画面不受影响 —— 动作整段有 try/catch 兜着）
         const motion = user.loadMotion(
           buf,
           buf.byteLength,
-          null as unknown as string,
-          undefined,
-          undefined,
-          setting,
-          group,
-          i,
-          false,
         ) as unknown as CubismMotion;
         if (!motion) continue;
         // ⚠️ 是 setFadeInTime / setFadeOutTime（不是 setFadeIn ✗）
@@ -290,6 +285,64 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
   }
 
   const idleGroup = groups.find((g) => /idle/i.test(g)) || groups[0] || '';
+
+  // ── 眨眼（自己实现）─────────────────────────────────────────────────
+  // 框架的 CubismEyeBlink 在这形象上内部 id 会是 null，一跑就炸 ✗。
+  // 但眨眼本质就是「把 ParamEyeLOpen / ParamEyeROpen 压到 0 再抬回来」✗ ——
+  // 直接写参数更简单、更可控，也不用跟框架那套较劲 ✅
+  const eyeIds: unknown[] = [];
+  const eyeCount = setting.getEyeBlinkParameterCount
+    ? setting.getEyeBlinkParameterCount()
+    : 0;
+  for (let i = 0; i < eyeCount; i++) eyeIds.push(setting.getEyeBlinkParameterId(i));
+
+  const lipIds: unknown[] = [];
+  const lipCount = setting.getLipSyncParameterCount
+    ? setting.getLipSyncParameterCount()
+    : 0;
+  for (let i = 0; i < lipCount; i++) lipIds.push(setting.getLipSyncParameterId(i));
+
+  // ⚠️ 必须给每个 motion 调 setEffectIds：CubismMotion 的 _eyeBlinkParameterIds
+  //    默认是 **null**，而 updateParameters 里直接 `.length` → 一播就抛错 ✗
+  //    （官方示例没调，因为它在别处设过；我们这条路径得自己来）
+  //    顺带把 lipSync 的 id 也带上 —— 口型同步将来就靠它 ✅
+  for (const m of motions.values()) {
+    const setter = (m as unknown as { setEffectIds?: (a: unknown[], b: unknown[]) => void })
+      .setEffectIds;
+    if (typeof setter === 'function') setter.call(m, eyeIds, lipIds);
+  }
+  log('特效 id：眨眼 ' + eyeIds.length + ' 个 · 口型 ' + lipIds.length + ' 个');
+
+  let blinkLeft = 0;
+  let blinkWait = 1.5 + Math.random() * 3;
+
+  /** 眨一次眼 */
+  function blink(): boolean {
+    if (!eyeIds.length) return false;
+    blinkLeft = 0.13; // 130ms，接近真人的眨眼时长
+    return true;
+  }
+
+  /** 自己算眨眼：0.13s 内做 1 → 0 → 1 的三角波 */
+  function updateBlink(dt: number) {
+    if (!eyeIds.length) return;
+    let open = 1;
+    if (blinkLeft > 0) {
+      blinkLeft -= dt;
+      const t = Math.max(0, blinkLeft) / 0.13; // 1 → 0
+      open = Math.abs(2 * t - 1); // 1 → 0 → 1
+    } else {
+      blinkWait -= dt;
+      if (blinkWait <= 0) {
+        blinkWait = 1.5 + Math.random() * 3;
+        blinkLeft = 0.13;
+        open = 0;
+      }
+    }
+    for (const id of eyeIds) {
+      model.setParameterValueById(id as never, open);
+    }
+  }
 
   /** 从某一组里随机挑一个播。`priority` 用 3(Force) 表示"点了立刻有反应"。 */
   function playRandomFrom(group: string, priority = 2): boolean {
@@ -345,6 +398,9 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
 
       scheduler.onLateUpdate(model, dt);
 
+      // 眨眼放在最后：让它**盖过**呼吸/物理对这些参数的写入 ✗
+      updateBlink(dt);
+
       model.update(); // Core 把顶点算成**变形后**的位置 —— 不做就会散架 ✗
 
       gl.clearColor(0, 0, 0, 0);
@@ -370,6 +426,7 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
     width: model.getCanvasWidth(),
     height: model.getCanvasHeight(),
     playReaction,
+    blink,
     destroy() {
       cancelAnimationFrame(raf);
       CubismFramework.dispose();
