@@ -169,6 +169,10 @@ def run(
             # 正在拖拽 —— 这期间**必须暂停"点穿"判定**：
             # 拖动时鼠标很容易瞬间滑出可点区域，判定就会把窗口设成穿透 → 拖拽断掉 ✗
             self._dragging = False
+            # 上一次的命中判定（只在变化时才真正去设 ignoresMouseEvents）
+            self._inside: object = None
+            # 🛡️ 保险：**至少见过一次"鼠标在身上"之前，绝不开启穿透**
+            self._ever_inside = False
             return self
 
         def userContentController_didReceiveScriptMessage_(  # noqa: N802
@@ -327,6 +331,9 @@ def run(
     #
     # 读鼠标位置用 CGEventCreate(None) —— **不需要任何系统授权**（实测 ✅）。
     saved_at = [0.0]
+    debug_once = [True]  # 第一次命中判定时，把关键数字打出来一次（排查坐标问题用）
+    ticks = [0]
+    warned = [False]
 
     def _tick(_timer):
         # ⚠️ 计时器里**绝对不能漏异常**：pyobjc 会把 ObjC 回调里的 Python 异常
@@ -334,29 +341,83 @@ def run(
         #    我们踩过一次：这里少 import 了 `time`，窗口起来 80ms 后整个进程消失，
         #    日志里只剩一片空白。所以**整个身体都包起来**。
         try:
+            ticks[0] += 1
             loc = CGEventGetLocation(CGEventCreate(None))
             frame = panel.frame()
 
             if click_through:
+                rel_x = rel_y = None  # 只在下面算得出来；拖拽/没矩形时保持 None
                 if bridge._dragging:
-                    # 拖拽中：一律接收鼠标事件（否则会把自己"点穿"掉，拖到一半断掉）
-                    panel.setIgnoresMouseEvents_(False)
+                    inside = True
                 else:
                     rects = bridge._hot_rects
                     # 网页还没报到时先当"能点"处理，免得它自己都点不了
                     inside = True
                     if rects:
-                        # 屏幕坐标 → 窗口内坐标。
-                        # ⚠️ AppKit 原点在**左下**、网页在**左上**，所以 y 要翻过来。
+                        # ⚠️ 这里有两个**原点不同**的坐标系，极易搞错：
+                        #   · CGEventGetLocation 给的鼠标位置：原点在**左上**
+                        #   · panel.frame() 给的窗口位置：原点在**左下**
+                        # 我第一版就把两者直接相减 → rel_y 永远差一整个屏高 →
+                        # 判定"鼠标从来不在猫身上"→ 窗口全程点穿 → **像死机** ✗
+                        # 正解：先把鼠标的 y 翻成 AppKit 口径（screen_h - y），
+                        # 再用窗口**顶边**减它，才等于"从窗口顶边往下量"。
+                        screen_h = NSScreen.mainScreen().frame().size.height
                         rel_x = loc.x - frame.origin.x
-                        rel_y = (frame.origin.y + frame.size.height) - loc.y
+                        rel_y = (frame.origin.y + frame.size.height) - (screen_h - loc.y)
                         slack = 6.0  # 边缘留点容差，免得反复抖动
                         inside = any(
                             (r["x"] - slack) <= rel_x <= (r["x"] + r["w"] + slack)
                             and (r["y"] - slack) <= rel_y <= (r["y"] + r["h"] + slack)
                             for r in rects
                         )
-                    panel.setIgnoresMouseEvents_(not inside)
+                        if debug_once[0]:
+                            debug_once[0] = False
+                            print(
+                                "置顶小条：命中判定自检 —— 鼠标({:.0f},{:.0f}) "
+                                "屏高{:.0f} 窗口({:.0f},{:.0f}) {}×{} "
+                                "→ 窗口内({:.0f},{:.0f}) 判定={}".format(
+                                    loc.x, loc.y, screen_h,
+                                    frame.origin.x, frame.origin.y,
+                                    frame.size.width, frame.size.height,
+                                    rel_x, rel_y,
+                                    "在身上" if inside else "在外面",
+                                ),
+                                flush=True,
+                            )
+
+                if inside:
+                    bridge._ever_inside = True
+
+                # 🛡️ 保险：在"见过鼠标进身上"之前**绝不开启穿透**。
+                #    万一以后坐标又算错，最坏只是"透明区域挡鼠标"（能忍），
+                #    而不是"整个窗口点不动、像死机"（不能忍）✗
+                if inside or not bridge._ever_inside:
+                    if bridge._inside is not False:
+                        bridge._inside = False
+                        panel.setIgnoresMouseEvents_(False)
+                        print(
+                            "置顶小条：鼠标在「可点区域」上 → 正常接收点击 ✅"
+                            "（窗口内 {:.0f},{:.0f}）".format(rel_x or 0, rel_y or 0),
+                            flush=True,
+                        )
+                elif bridge._inside is not True:
+                    bridge._inside = True
+                    panel.setIgnoresMouseEvents_(True)
+                    print(
+                        "置顶小条：鼠标离开可点区域 → 点穿桌面 ✨"
+                        "（窗口内 {:.0f},{:.0f}）".format(rel_x or 0, rel_y or 0),
+                        flush=True,
+                    )
+
+                # 4 秒了还没见过鼠标进身上 → 坐标大概算错了。**吵出来**，
+                # 不然它会静默地"从不穿透"，下次又要从头查一遍 ✗
+                if not bridge._ever_inside and not warned[0] and ticks[0] > 50:
+                    warned[0] = True
+                    print(
+                        "置顶小条：⚠️ 一直没见到鼠标进入「可点区域」—— 坐标换算可能不对，"
+                        "「点穿」暂不生效（不挡你，但也没生效）",
+                        flush=True,
+                    )
 
             # 顺手把窗口位置记下来（拖动后 1 秒落一次盘，别每帧都写文件）
             now = time.monotonic()
