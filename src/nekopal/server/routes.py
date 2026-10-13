@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import mimetypes
 import re
 from pathlib import Path
 from typing import Any
@@ -17,12 +18,35 @@ from nekopal.core import export as audio_export
 from nekopal.core.export import ExportError, available_formats, missing_tool
 from nekopal.core.models import SynthOptions
 from nekopal.core.pipeline import prepare_sentences, synthesize_sentence
+from nekopal.packs import config_dir, load_packs
 from nekopal.server.schemas import InvalidRequest, parse_append_request, parse_read_request
 from nekopal.server.state import Runtime
 
 
 def _invalid(message: str) -> HTTPException:
     return HTTPException(400, {"code": "INVALID_REQUEST", "message": message})
+
+
+def _outside_file(root: Path, relative: str, code: str) -> FileResponse:
+    """把 ``root/<relative>`` 当文件发出去，并**挡住目录穿越**。
+
+    ``relative`` 来自 URL、用户可控 —— 不校验的话 ``../../.ssh/id_rsa`` 就被读走了 ✗。
+
+    做法：``resolve()`` 之后必须仍**在 root 里面**。注意用**路径段**比较
+    （``root in target.parents``），不要用字符串前缀 ——
+    ``/a/bc`` 会被 ``startswith("/a/b")`` 误判成"在里面" ✗。
+    """
+
+    root = root.resolve()
+    target = (root / relative).resolve()
+
+    if target != root and root not in target.parents:
+        raise HTTPException(403, {"code": code + "_FORBIDDEN", "message": "路径越界"})
+    if not target.is_file():
+        raise HTTPException(404, {"code": code + "_MISSING", "message": "文件不存在"})
+
+    media, _ = mimetypes.guess_type(str(target))
+    return FileResponse(str(target), media_type=media or "application/octet-stream")
 
 
 def _safe_name(raw: str) -> str:
@@ -472,6 +496,66 @@ def build_router(runtime: Runtime) -> APIRouter:
         raise HTTPException(
             501,
             {"code": "NOT_IMPLEMENTED", "message": "角色层将在 Phase 3 提供"},
+        )
+
+    # -- 角色形象（Live2D）------------------------------------------------
+    # 为什么由后端中转：模型和 Cubism Core 都在**仓库外**（`~/.config/nekopal/`），
+    # 而 `StaticFiles` 只挂了 `web/` —— 前端够不着。
+    # 顺带把 Core 挡在这一层：它**不进仓库**（见 characters/README.md 的红线）。
+
+    @router.get("/avatar")
+    async def avatar() -> dict:
+        """当前可用的角色形象（前端据此决定要不要挂 Live2D）。
+
+        只报**模型文件齐全**的角色包 —— 缺形象的会降级成"只有声音"，
+        朗读不受影响（设计文档 4.5）。
+        """
+
+        ready = [c for c in load_packs().characters if c.model_exists]
+        out = []
+        for c in ready:
+            # ⚠️ `avatar_model` 是**绝对路径**（packs 里 resolve 过）。直接丢给前端会拼成
+            #    `/api/avatar/rana//Users/...` ✗，而且把本机路径泄露到接口里 ✗。
+            #    所以在这儿换成「相对角色包的路径」，并顺手给出可直接用的 url。
+            rel = None
+            if c.avatar_model:
+                try:
+                    rel = str(Path(c.avatar_model).relative_to(c.path))
+                except ValueError:
+                    rel = None
+            out.append(
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "type": c.avatar_type,
+                    "model": rel,
+                    "url": "/api/avatar/{}/{}".format(c.id, rel) if rel else None,
+                    "lipsync": {"mode": c.lipsync_mode, "param": c.lipsync_param},
+                    "expressions": dict(c.expressions),
+                }
+            )
+        return {"characters": out, "active": out[0]["id"] if out else None}
+
+    @router.get("/avatar-core/{name}")
+    async def avatar_core(name: str) -> FileResponse:
+        """Live2D 官方的 **Cubism Core**（专有运行时，**不进仓库**）。
+
+        由使用者自己从 Live2D 官网获取、同意条款，放在 ``~/.config/nekopal/core/``。
+        这里只做**本地中转**给页面加载，项目本身不分发它。
+        """
+
+        return _outside_file(config_dir() / "core", name, "CORE")
+
+    @router.get("/avatar/{char_id}/{file_path:path}")
+    async def avatar_file(char_id: str, file_path: str) -> FileResponse:
+        """把角色包里的一个文件发出去（模型 json / moc3 / 贴图 / 动作）。"""
+
+        for pack in load_packs().characters:
+            if pack.id == char_id:
+                return _outside_file(Path(pack.path), file_path, "AVATAR")
+
+        raise HTTPException(
+            404, {"code": "AVATAR_NOT_FOUND", "message": "没有这个角色包"}
         )
 
     return router

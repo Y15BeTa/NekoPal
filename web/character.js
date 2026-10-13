@@ -28,6 +28,29 @@ function toNative(action, extra = {}) {
 if (native) document.body.classList.add('native');
 
 /**
+ * 把消息丢到原生日志里。
+ *
+ * 为什么需要它：角色窗口是**没有开发者工具**的（我们只做接口，不做调试面板），
+ * 而我又看不到你的屏幕 —— 出了问题只能靠它说话 ✗
+ * 这是这个项目里"能说话 > 聪明"的又一次实践。
+ */
+function log(text) {
+  if (native) toNative('log', { text: String(text) });
+}
+
+// 任何未捕获的 JS 错误 / Promise 拒绝，都送进原生日志
+window.addEventListener('error', (e) => {
+  // 带上调用栈 —— 压缩库里只有栈能看出是哪个函数炸的
+  const stack = e.error && e.error.stack ? '\n' + e.error.stack : '';
+  log('[js-error] ' + (e.message || e) + ' @ ' + (e.filename || '?') + ':' +
+      (e.lineno || 0) + stack);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  log('[js-reject] ' + (r && r.message ? r.message : r));
+});
+
+/**
  * **由原生调用**：显示 / 收起按钮列。
  *
  * 为什么不让网页自己用 CSS `:hover` 判断：鼠标一离开可点区域，原生就把窗口
@@ -153,8 +176,137 @@ async function refresh() {
   }
 }
 
+/**
+ * ⚠️ Cubism 4 / 5 的**版本桥**。
+ *
+ * Cubism **Core 5** 把 moc 里的 `renderOrders` 改名成了 `drawOrders`，
+ * 而 `pixi-live2d-display@0.4.0` 是照 **Cubism 4** 写的、仍然读 `renderOrders`：
+ * 拿到 undefined → 渲染直接炸（但模型"看起来"加载成功了，很难查 ✗）。
+ * 我们逐字段比对过 Core 给出的 drawables，**只差这一个名字**。
+ *
+ * 所以在 Core 外面套一层：`Model.fromMoc` 拿到模型后把旧名字补上。
+ * 这样**不用改第三方文件**、升级库时也不会丢，将来有配 Cubism 5 的库就能整段删掉。
+ */
+function bridgeCubismVersion() {
+  const core = window.Live2DCubismCore;
+  if (!core || !core.Model || core.__nekopalBridged) return;
+
+  const original = core.Model.fromMoc;
+  core.Model.fromMoc = function (moc) {
+    const model = original.call(this, moc);
+    const d = model && model.drawables;
+    if (d && d.renderOrders === undefined && d.drawOrders !== undefined) {
+      d.renderOrders = d.drawOrders;
+      log(
+        '版本桥已套用：renderOrders ← drawOrders (' +
+          d.renderOrders.length + ' 个)' +
+          (d.renderOrders ? '' : ' ❌ 还是 undefined（字段只读？）'),
+      );
+    }
+    return model;
+  };
+  core.__nekopalBridged = true;
+}
+
+/**
+ * 直接问 Cubism Core 几个问题 —— 用来判断"是不是版本不匹配"。
+ *
+ * 为什么值得单独做：`pixi-live2d-display@0.4.0` 是照着 **Cubism 4** 写的，
+ * 而我们用的是 **Cubism 5** 的 Core。两者万一对不上，表现出来就是
+ * `renderOrder` 之类的字段变成 undefined（渲染直接炸，但模型"看起来"加载成功了 ✗）。
+ * 所以开机先自检一次，把版本号摊开 ✗
+ */
+async function probeCore(modelUrl) {
+  try {
+    const dir = modelUrl.slice(0, modelUrl.lastIndexOf('/') + 1);
+    const meta = await (await fetch(modelUrl)).json();
+    const mocName = (meta.FileReferences || {}).Moc;
+    log('model3.json: moc=' + mocName + ' 贴图=' +
+        ((meta.FileReferences || {}).Textures || []).length + ' 张');
+
+    const core = window.Live2DCubismCore;
+    log('Core 版本 0x' + core.Version.csmGetVersion().toString(16) +
+        ' · 最高支持 moc v' + core.Version.csmGetLatestMocVersion());
+
+    const buf = await (await fetch(dir + mocName)).arrayBuffer();
+    log('moc3 读到 ' + buf.byteLength + ' 字节 · 自身版本 v' +
+        core.Version.csmGetMocVersion(buf, buf.byteLength));
+
+    const model = core.Model.fromMoc(core.Moc.fromArrayBuffer(buf));
+    const d = model.drawables;
+    log('drawables 字段: ' + Object.keys(d).join(', '));
+    log('renderOrders: ' +
+        (d.renderOrders ? d.renderOrders.length + ' 个' : '❌ undefined'));
+  } catch (err) {
+    log('Core 自检失败 ✗ ' + (err && err.message ? err.message : err));
+  }
+}
+
+// ── Live2D：把角色包里的模型挂到 canvas 上 ──────────────────────────────
+// 挂不上就安静退回 🐱 占位 —— 朗读、按钮、拖拽、精确命中全都不受影响。
+async function mountLive2D() {
+  const canvas = document.getElementById('live2d');
+
+  if (!window.Live2DCubismCore) return log('没有 Cubism Core → 保持 🐱 占位');
+  if (!window.PIXI || !window.PIXI.live2d) {
+    return log('没有 pixi / pixi-live2d-display → 保持 🐱 占位');
+  }
+
+  let info;
+  try {
+    info = await (await fetch('/api/avatar')).json();
+  } catch (err) {
+    return log('拿不到 /api/avatar：' + err);
+  }
+
+  const active = (info.characters || []).find((c) => c.id === info.active);
+  if (!active || !active.url) return log('没有「形象就绪」的角色包');
+
+  const url = active.url;
+  log('开始加载模型：' + url);
+  bridgeCubismVersion();
+  await probeCore(url);
+
+  try {
+    // ⚠️ 尺寸**显式给**，不要用 resizeTo：canvas 现在还是 display:none，
+    //    resizeTo 量到 0 → app.screen 为 0 → 缩放算出 0 → 什么都看不见 ✗
+    const app = new PIXI.Application({
+      view: canvas,
+      width: character.clientWidth || 224,
+      height: character.clientHeight || 420,
+      transparent: true,
+      antialias: true,
+      backgroundAlpha: 0,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+    });
+
+    const model = await PIXI.live2d.Live2DModel.from(url);
+    app.stage.addChild(model);
+
+    // 按**高度**填满角色区（桌宠要的是人明显，宽度随它去）
+    model.scale.set(1);
+    const raw = app.screen.height / (model.height || 1);
+    const scale = Number.isFinite(raw) && raw > 0 ? raw : 1;
+    model.scale.set(scale);
+    model.anchor.set(0.5, 0.5);
+    model.x = app.screen.width / 2;
+    model.y = app.screen.height / 2;
+
+    character.classList.add('has-model');
+    log(
+      'Live2D 挂上了 ✅ 模型原生 ' + Math.round(model.width) + '×' +
+      Math.round(model.height) + ' · 画布 ' + Math.round(app.screen.width) +
+      '×' + Math.round(app.screen.height) + ' · 缩放 ' + scale.toFixed(4),
+    );
+  } catch (err) {
+    log('Live2D 加载失败 ✗ ' + (err && err.message ? err.message : err));
+  }
+}
+
 refresh();
 setInterval(refresh, 4000);
+mountLive2D();
 
 // 向原生报到：日志里出现这句，就说明页面**真的渲染出来了**（而不是个空壳窗口）
 if (native) toNative('hello');

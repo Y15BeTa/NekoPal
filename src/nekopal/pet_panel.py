@@ -274,6 +274,9 @@ def run(
                     ),
                     flush=True,
                 )
+            elif action == "log":
+                # 网页把消息丢进来 —— 角色窗口没有开发者工具，这是它唯一能"说话"的渠道
+                print("网页：{}".format(getter("text")), flush=True)
             elif action == "hello":
                 # 页面加载完的第一声 —— 日志里有它，就证明网页**真的渲染出来了**
                 print("置顶小条：网页已加载 ✅（原生外壳里正常渲染）", flush=True)

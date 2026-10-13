@@ -39,12 +39,30 @@ body {
   cursor: grabbing;
 }
 
-/* 占位形象：呼吸感 —— 正式接上 Live2D 后这一块会被 canvas 取代 */
+/* 占位形象：呼吸感 —— Live2D 挂上后会被 .has-model 藏起来 */
 .avatar {
   font-size: 104px;
   line-height: 1;
   filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.4));
   animation: breathe 3.6s ease-in-out infinite;
+}
+
+/* Live2D 画布：填满角色区，但**不吃鼠标**（拖拽交给 .character） */
+.character canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: none; /* 挂上模型后才显示 */
+}
+
+.character.has-model canvas {
+  display: block;
+}
+
+.character.has-model .avatar {
+  display: none;
 }
 
 @keyframes breathe {

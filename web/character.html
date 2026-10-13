@@ -24,6 +24,8 @@
     <!-- 角色本体：唯一可拖、可点的"实体" -->
     <div class="character" id="character">
       <div class="avatar">🐱</div>
+      <!-- Live2D 挂上来之后，用 .has-model 把上面的 🐱 藏起来 -->
+      <canvas id="live2d"></canvas>
     </div>
 
     <!-- 按钮列：平时 opacity:0，鼠标移到角色上才浮出来 -->
@@ -69,6 +71,17 @@
     <!-- 跟读窗连没连着（绿=连上，灰=没连） -->
     <span class="dot" id="dot" title="跟读窗状态"></span>
   </div>
+  <!--
+    Live2D 渲染栈。**顺序不能反**：
+      ① Cubism Core —— Live2D 官方专有运行时（从 ~/.config/nekopal/core/ 本地中转）
+      ② pixi.js
+      ③ pixi-live2d-display 的 cubism4 包（它把自己挂到全局 PIXI 上）
+    任一个失败都不影响别的功能：角色退回 🐱 占位（见 character.js），
+    朗读、悬停按钮、拖拽、精确命中全都照常。
+  -->
+  <script src="/api/avatar-core/live2dcubismcore.min.js"></script>
+  <script src="vendor/pixi.min.js"></script>
+  <script src="vendor/cubism4.js"></script>
   <script src="character.js" type="module"></script>
 </body>
 </html>
