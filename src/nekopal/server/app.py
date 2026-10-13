@@ -37,15 +37,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.middleware("http")
     async def no_cache_web_assets(request: Request, call_next):
-        """前端资源一律要求重新校验。
+        """前端资源与 **API 响应**一律禁止缓存。
 
-        否则改完 `web/` 后浏览器会继续用旧文件，出现「界面更新了但行为还是旧的」
-        这类极难排查的问题（就踩过一次）。
+        两件事都踩过：
+
+        1. 前端资源：改完 `web/` 后浏览器继续用旧文件，出现「界面更新了但行为还是旧的」
+           —— 极难排查。
+        2. **API 响应**（2026-10-13 补 ✗）：原来只给非 `/api` 路径加头 ✗，
+           于是 `/api/avatar` 没有任何缓存头 ✗ → WKWebView **启发式缓存**了它 ✗ →
+           角色窗一直拿着**加了 `outfits` 字段之前**的旧响应 ✗ →
+           菜单里换装/动作/表情**全是空的**（查了很久 ✗）。
         """
 
         response = await call_next(request)
-        if not request.url.path.startswith("/api"):
-            response.headers["Cache-Control"] = "no-cache"
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
         return response
 
     @app.exception_handler(HTTPException)

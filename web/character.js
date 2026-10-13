@@ -249,10 +249,16 @@ async function ensureAvatarInfo() {
   //    写成 `if (avatarInfo?.outfits)` 的话永远不重取 ✗（踩过）
   if (avatarInfo?.outfits?.length) return avatarInfo;
   try {
-    avatarInfo = await (await fetch('/api/avatar')).json();
+    // ⚠️ `cache:'no-store'` —— 后端现在也发了 no-store ✗，
+    //    但这里再写一道更保险 ✗（之前就是被启发式缓存坑了很久 ✗）
+    const res = await fetch('/api/avatar', { cache: 'no-store' });
+    avatarInfo = await res.json();
     log(
-      '补取 /api/avatar：形象 ' + (avatarInfo?.outfits?.length ?? '?') +
-        ' 个 · active ' + avatarInfo?.active,
+      '补取 /api/avatar（' + res.status + '）：顶层键 [' +
+        Object.keys(avatarInfo || {}).join(',') + '] · characters=' +
+        (avatarInfo?.characters?.length ?? '无') + ' · 角色0的键 [' +
+        Object.keys(avatarInfo?.characters?.[0] || {}).join(',') + ']' +
+        ' · outfits=' + (avatarInfo?.characters?.[0]?.outfits?.length ?? '无 ✗'),
     );
   } catch (err) {
     log('补取 /api/avatar 失败 ✗ ' + err);

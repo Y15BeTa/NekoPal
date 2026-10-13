@@ -285,6 +285,12 @@ def run(
             elif action == "menu":
                 # 网页告诉我们右键菜单开了 / 关了 —— 关菜单要靠原生 ✗
                 self._menu_open = bool(getter("open"))
+                print(
+                    "置顶小条：右键菜单{}".format(
+                        "已打开（开始盯着窗口外点击）" if self._menu_open else "已关闭"
+                    ),
+                    flush=True,
+                )
             elif action == "dragging":
                 self._dragging = bool(getter("on"))
             elif action == "hot":
@@ -435,6 +441,7 @@ def run(
     debug_once = [True]  # 第一次命中判定时，把关键数字打出来一次（排查坐标问题用）
     ticks = [0]
     warned = [False]
+    diag_at = [0]  # 「菜单开着但关不掉」时的节流诊断 ✗
 
     def _report_js_error(_result, error) -> None:
         """evaluateJavaScript 的回调：只在**出错**时说话（平时闭嘴）。"""
@@ -571,6 +578,16 @@ def run(
                         "window.__nekopalCloseMenu && window.__nekopalCloseMenu()"
                     )
                 bridge._was_down = down
+
+                # 节流诊断（每秒一次 ✗）：万一关不掉，这行会说明是哪个条件不对 ✗
+                if ticks[0] - diag_at[0] > 12:
+                    diag_at[0] = ticks[0]
+                    print(
+                        "置顶小条：菜单开着 · 判定 在外 · 按键 {} · 窗口内({:.0f},{:.0f})".format(
+                            down, rel_x or 0, rel_y or 0
+                        ),
+                        flush=True,
+                    )
             else:
                 bridge._was_down = False
 
