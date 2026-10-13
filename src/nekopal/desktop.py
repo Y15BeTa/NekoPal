@@ -28,7 +28,8 @@ WINDOW_TITLE = "NekoPal 猫伴"
 
 #: 置顶小条的标题与默认尺寸（够放一只猫 + 两个按钮）
 PET_TITLE = "猫伴"
-PET_SIZE = (236, 86)
+PET_SIZE = (236, 86)  # 小条形态（nekopal pet --strip）
+CHARACTER_SIZE = (320, 440)  # 角色形态（默认）：一个人物 + 悬停浮现的按钮列
 
 
 def backend_alive(base: str, timeout: float = 0.6) -> bool:
@@ -183,21 +184,35 @@ def spawn_backend(settings: Settings) -> subprocess.Popen:
 
 
 def _run_pet_window(
-    url: str, width: int, height: int, hidden: bool, settings: Settings
+    page: str,
+    size: tuple,
+    hidden: bool,
+    settings: Settings,
+    click_through: bool,
 ) -> int:
-    """把小条的窗口开出来：**能用 macOS 原生外壳就用原生**，否则退回 pywebview。
+    """把窗口开出来：**能用 macOS 原生外壳就用原生**，否则退回 pywebview。
 
     为什么优先原生：只有 ``NSPanel`` 能**浮在别的 App 的全屏之上**，
     pywebview 的窗口做不到（根因与证据见 ``nekopal.pet_panel`` 的模块注释）。
     """
 
+    url = "http://{}:{}{}".format(settings.host, settings.port, page)
+    width, height = size
+
     # ⚠️ hidden（--hidden，给测试用）时走 pywebview：原生外壳不方便"隐藏启动"。
     if not hidden and pet_panel.available():
         try:
-            return pet_panel.run(url, width=width, height=height)
+            return pet_panel.run(
+                url,
+                width=width,
+                height=height,
+                click_through=click_through,
+                # 记住窗口位置：你拖到顺手的地方后，重启还在那儿
+                state_path=str(settings.cache_dir / "pet-window.json"),
+            )
         except Exception as exc:  # noqa: BLE001 - 兜底：退回 pywebview，别让你没得用
             print(
-                "原生小条启动失败（{}），改用 pywebview。".format(exc),
+                "原生外壳启动失败（{}），改用 pywebview。".format(exc),
                 file=sys.stderr,
             )
 
@@ -229,14 +244,20 @@ def _run_pet_window(
     return 0
 
 
-def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
-    """打开「置顶小条」：透明 / 无边框 / 全局置顶 / 可拖动。
+def run_pet(
+    settings: Optional[Settings] = None, hidden: bool = False, strip: bool = False
+) -> int:
+    """打开角色窗口：透明 / 无边框 / 全局置顶 / 可拖动。
 
-    这是**桌宠（角色层）的第一步** —— 先把「置顶窗口 + 点击控制」这套基础设施做出来，
-    等有 Live2D 模型后，同一个窗口就换成角色本体（设计文档 6.5 / 6.9）。
+    **默认是「角色形态」**：平时只有一个人物，鼠标移到它身上才浮出旁边的
+    半透明按钮列（`web/character.html`）。这是桌宠的标准形态 ——
+    平时不占眼睛，要用的时候按钮自己就来了。
 
-    macOS 上优先用**原生 ``NSPanel``**（见 ``_run_pet_window``）：它是唯一能
-    **浮在别的 App 全屏之上**的做法 —— 也就是"你全屏看视频时它也不会消失"。
+    ``strip=True`` 回到旧的「小条形态」（`web/pet.html`）：一条窄栏，
+    按钮常驻。适合只想快速点一下暂停/继续的场景。
+
+    两者都跑在 macOS 原生 ``NSPanel`` 上（见 ``_run_pet_window``），
+    所以**都能浮在别的 App 全屏之上** —— 你全屏看视频时它们也不会消失。
 
     为什么它比全局快捷键更好：**它一直在那儿** —— 点一下就暂停/继续，
     不用切窗口，也不用记组合键。而快捷键那套仍然保留作为备选。
@@ -256,10 +277,15 @@ def run_pet(settings: Optional[Settings] = None, hidden: bool = False) -> int:
         else:
             print("后端启动失败：请手动运行 `nekopal serve` 后再试。", file=sys.stderr)
 
-    width, height = PET_SIZE
+    if strip:
+        # 小条是实心的，不需要精确命中（开着反而会让它点不着）
+        page, size, click_through = "/pet.html", PET_SIZE, False
+    else:
+        # 角色是"非矩形"的，必须开精确命中：否则大透明窗口会挡住你点桌面
+        page, size, click_through = "/character.html", CHARACTER_SIZE, True
 
     try:
-        return _run_pet_window(base + "/pet.html", width, height, hidden, settings)
+        return _run_pet_window(page, size, hidden, settings, click_through)
     finally:
         if child is not None and child.poll() is None:
             child.terminate()

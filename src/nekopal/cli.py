@@ -443,7 +443,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
 
 
 def _cmd_pet(args: argparse.Namespace) -> int:
-    """打开置顶小条：点一下就暂停/继续（桌宠的第一步）。"""
+    """打开角色窗口：平时一个人物，悬停才浮出按钮（--strip 回到窄条形态）。"""
 
     from nekopal.desktop import run_pet
 
@@ -452,7 +452,7 @@ def _cmd_pet(args: argparse.Namespace) -> int:
         settings.host = args.host
     if args.port:
         settings.port = args.port
-    return run_pet(settings, hidden=args.hidden)
+    return run_pet(settings, hidden=args.hidden, strip=args.strip)
 
 
 def _cmd_control(args: argparse.Namespace) -> int:
@@ -612,10 +612,15 @@ def build_parser() -> argparse.ArgumentParser:
     control_cmd.add_argument("--host", default=None)
     control_cmd.add_argument("--port", type=int, default=None)
 
-    pet_cmd = sub.add_parser("pet", help="打开置顶小条（点一下就暂停/继续）")
+    pet_cmd = sub.add_parser("pet", help="打开角色窗口（平时一个人物，悬停才浮出按钮）")
     pet_cmd.add_argument("--host", default=None)
     pet_cmd.add_argument("--port", type=int, default=None)
     pet_cmd.add_argument("--hidden", action="store_true", help="不开窗，只做启动自检")
+    pet_cmd.add_argument(
+        "--strip",
+        action="store_true",
+        help="用旧的「窄条」形态（按钮常驻），而不是默认的角色形态",
+    )
 
     auto = sub.add_parser("autostart", help="开机自启（macOS LaunchAgent）")
     auto.add_argument(

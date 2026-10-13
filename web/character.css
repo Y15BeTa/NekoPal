@@ -1,0 +1,137 @@
+/* 角色窗口的样式：窗口全透明，只留"人物 + 悬停才出现的按钮"。 */
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent; /* 让原生窗口的透明透出来 */
+  overflow: hidden;
+  font: 12px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.stage {
+  position: relative;
+  height: 100%;
+  /* 空白处不拦鼠标 —— 配合原生的「精确命中」，点空白 = 点穿到桌面 */
+  pointer-events: none;
+}
+
+/* ── 角色本体 ─────────────────────────────────────────────────── */
+
+.character {
+  pointer-events: auto;
+  position: absolute;
+  left: 86px; /* 给左边的按钮列让位 */
+  right: 10px;
+  top: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 26px;
+  cursor: grab;
+}
+
+.character:active {
+  cursor: grabbing;
+}
+
+/* 占位形象：呼吸感 —— 正式接上 Live2D 后这一块会被 canvas 取代 */
+.avatar {
+  font-size: 104px;
+  line-height: 1;
+  filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.4));
+  animation: breathe 3.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1) translateY(0); }
+  50%      { transform: scale(1.045) translateY(-4px); }
+}
+
+/* 没有跟读窗连着时变灰（和按钮的灰点联动） */
+.stage.offline .avatar {
+  filter: grayscale(1) drop-shadow(0 10px 26px rgba(0, 0, 0, 0.3));
+  opacity: 0.5;
+}
+
+/* ── 悬停才出现的半透明按钮列 ─────────────────────────────────── */
+
+.actions {
+  pointer-events: auto; /* 注意：opacity:0 也照样能收到 hover，正是我们要的 */
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  opacity: 0; /* 平时藏起来 */
+  transform: translateY(-50%) translateX(-6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+/* 鼠标移到角色身上（或按钮上）才浮出来 */
+.character:hover ~ .actions,
+.actions:hover {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.actions button {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(38, 34, 44, 0.55); /* 半透明 */
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.actions button:hover {
+  background: rgba(38, 34, 44, 0.85);
+  transform: scale(1.09);
+}
+
+.actions button:active {
+  transform: scale(0.95);
+}
+
+#close:hover {
+  background: rgba(220, 76, 76, 0.85);
+}
+
+/* 分隔线（分组：播放控制 ｜ 停止 / 关闭） */
+.actions .sep {
+  height: 1px;
+  margin: 1px 8px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ── 状态点 ──────────────────────────────────────────────────── */
+
+.dot {
+  position: absolute;
+  right: 20px;
+  top: 18px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6ee7a8;
+  box-shadow: 0 0 9px #6ee7a8;
+  opacity: 0.85;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stage.offline .dot {
+  background: #9aa0a6;
+  box-shadow: none;
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>猫伴 · 角色</title>
+  <link rel="stylesheet" href="character.css">
+</head>
+<body>
+  <!--
+    角色窗口：**平时只有一个人物**，鼠标移到人物上才浮出旁边的半透明按钮。
+
+    ⚠️ 角色本体现在是**占位**（🐱）：Live2D 渲染要等 Cubism Core 到位。
+    接上时只需把 `.avatar` 里的内容换成 pixi 的 canvas —— 布局与交互都不用动。
+
+    窗口本身是全透明的，且原生侧会做「精确命中」：
+    只有 `.character` 和 `.actions` 这两个矩形里能点，其他地方**点穿**到桌面。
+    （这两个矩形由 character.js 报给原生，见 reportHotRects）
+  -->
+  <div class="stage">
+    <!-- 角色本体：唯一可拖、可点的"实体" -->
+    <div class="character" id="character">
+      <div class="avatar">🐱</div>
+    </div>
+
+    <!-- 按钮列：平时 opacity:0，悬停才淡入（半透明毛玻璃） -->
+    <div class="actions">
+      <button id="prev" title="上一句">⏮</button>
+      <button id="toggle" title="暂停 / 继续">⏯</button>
+      <button id="next" title="下一句">⏭</button>
+      <span class="sep"></span>
+      <button id="stop" title="停止">⏹</button>
+      <button id="close" title="关掉猫伴">✕</button>
+    </div>
+
+    <!-- 跟读窗连没连着（绿=连上，灰=没连） -->
+    <span class="dot" id="dot" title="跟读窗状态"></span>
+  </div>
+  <script src="character.js" type="module"></script>
+</body>
+</html>

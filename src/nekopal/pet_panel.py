@@ -39,9 +39,44 @@ macOS 给这种面板的特权就是「**浮在全屏之上** + **出现在所�
 
 from __future__ import annotations
 
+import json
 import sys
+import time
+from pathlib import Path
+from typing import Optional
 
 __all__ = ["available", "run"]
+
+
+def _load_origin(state_path: Optional[str]) -> Optional[tuple]:
+    """读回上次拖到的窗口位置；没有 / 坏了都返回 None（用默认角落）。
+
+    为什么要有它：桌宠被你拖到顺手的位置后，重启又弹回角落会很烦 ✗。
+    """
+
+    if not state_path:
+        return None
+
+    try:
+        with open(state_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return float(data["x"]), float(data["y"])
+    except Exception:  # noqa: BLE001 - 文件不存在 / 损坏都无所谓，不算错误
+        return None
+
+
+def _save_origin(state_path: Optional[str], origin) -> None:
+    """把窗口位置记下来（失败就算了，不值得打扰用户）。"""
+
+    if not state_path:
+        return
+
+    try:
+        Path(state_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(state_path, "w", encoding="utf-8") as fh:
+            json.dump({"x": round(origin.x), "y": round(origin.y)}, fh)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def available() -> bool:
@@ -74,13 +109,19 @@ def run(
     height: int,
     margin: int = 16,
     corner: str = "bottom-right",
+    click_through: bool = True,
+    state_path: Optional[str] = None,
 ) -> int:
-    """起一个 ``NSPanel`` 装着的置顶小条，阻塞到它被关掉。
+    """起一个 ``NSPanel`` 装着的置顶窗口，阻塞到它被关掉。
 
     返回进程退出码（0 = 正常）。
 
-    :param url: 要加载的页面（后端的 ``/pet.html``）
+    :param url: 要加载的页面（后端的 ``/character.html`` 或 ``/pet.html``）
     :param corner: 初始停在屏幕哪个角，见 ``_CORNERS``
+    :param click_through: **精确命中**。为 True 时，只有网页报过来的
+        「我身上」的矩形接收鼠标事件，其余透明区域**点穿**到桌面 ——
+        否会一个大透明窗口会挡住你点别的东西 ✗。角色窗口该开，小条不用。
+    :param state_path: 记住窗口位置的文件；下次启动回到你拖到的地方
     """
 
     import objc
@@ -102,14 +143,15 @@ def run(
         NSWindowStyleMaskBorderless,
         NSWindowStyleMaskNonactivatingPanel,
     )
-    from Foundation import NSURL, NSObject, NSURLRequest
+    from Foundation import NSURL, NSObject, NSTimer, NSURLRequest
+    from Quartz import CGEventCreate, CGEventGetLocation
     from WebKit import WKWebsiteDataStore, WKWebView, WKWebViewConfiguration
 
     # ⚠️ 不把 `WKScriptMessageHandler` 放进基类：pyobjc 下
     #    `class X(NSObject, protocolNamed(...))` 会 **metaclass conflict** 崩掉。
     #    直接继承 NSObject 就行 —— ObjC 只要求"能响应那个 selector"，不看协议声明。
     class _MessageBridge(NSObject):
-        """网页 → 原生的消息通道（拖动 / 关闭）。
+        """网页 → 原生的消息通道（拖动 / 关闭 / 精确命中）。
 
         ``NSObject`` 必须持有它（``addScriptMessageHandler_name_`` 只存弱引用，
         否则会被 GC 掉，消息就永远收不到）。
@@ -120,6 +162,13 @@ def run(
             if self is None:
                 return None
             self._panel = panel
+            # 网页报过来的「我身上」矩形（窗口内坐标，原点左上）—— 给 _tick 做精确命中
+            self._hot_rects: list = []
+            # 窗口被拖动过、位置还没落盘
+            self._dirty = False
+            # 正在拖拽 —— 这期间**必须暂停"点穿"判定**：
+            # 拖动时鼠标很容易瞬间滑出可点区域，判定就会把窗口设成穿透 → 拖拽断掉 ✗
+            self._dragging = False
             return self
 
         def userContentController_didReceiveScriptMessage_(  # noqa: N802
@@ -145,6 +194,30 @@ def run(
                         frame.origin.y - float(body.get("dy", 0)),
                     )
                 )
+                self._dirty = True  # 让 _tick 稍后把新位置落盘
+            elif action == "dragging":
+                self._dragging = bool(getter("on"))
+            elif action == "hot":
+                # 网页告诉我们"哪些矩形算我身上" → 据此做精确命中（见 _tick）
+                try:
+                    self._hot_rects = [
+                        {
+                            "x": float(r.get("x", 0)),
+                            "y": float(r.get("y", 0)),
+                            "w": float(r.get("w", 0)),
+                            "h": float(r.get("h", 0)),
+                        }
+                        for r in (getter("rects") or [])
+                    ]
+                except Exception as exc:  # noqa: BLE001
+                    print("置顶小条：hot 矩形解析失败：{}".format(exc), flush=True)
+                else:
+                    print(
+                        "置顶小条：收到 {} 个「可点区域」→ 其余地方点穿桌面 ✨".format(
+                            len(self._hot_rects)
+                        ),
+                        flush=True,
+                    )
             elif action == "hello":
                 # 页面加载完的第一声 —— 日志里有它，就证明网页**真的渲染出来了**
                 print("置顶小条：网页已加载 ✅（原生外壳里正常渲染）", flush=True)
@@ -211,6 +284,9 @@ def run(
         | NSWindowCollectionBehaviorStationary
     )
     panel.setMovableByWindowBackground_(True)  # 卡片留白处也能拖（网页区域走 JS bridge）
+    # 让窗口即使在**不是 key window** 时也收得到 mouseMoved ——
+    # 否则网页里的 hover / 拖拽会时灵时不灵（我们是不抢焦点的 accessory app）。
+    panel.setAcceptsMouseMovedEvents_(True)
 
     config = WKWebViewConfiguration.alloc().init()
     # ⚠️ 用**非持久**数据存储：否则 WKWebView 会把 pet.js 缓存到磁盘，
@@ -237,6 +313,62 @@ def run(
         pass
     view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
     panel.setContentView_(view)
+
+    # 位置：优先回到你上次拖到的地方（不然每次启动都被拽回角落，很烦 ✗）
+    saved = _load_origin(state_path)
+    if saved is not None:
+        panel.setFrameOrigin_(NSMakePoint(saved[0], saved[1]))
+
+    # ── 精确命中 + 记住位置 ──────────────────────────────────────────────
+    # 为什么需要精确命中：窗口是个**矩形**，但角色不是 ✗ ——
+    # 不做这个的话，一个大的透明窗口会**挡住你点桌面上的东西** ✗。
+    # 做法：每 80ms 看一眼鼠标在哪，只有落在网页报过来的「我身上」的矩形里
+    # 才接收鼠标事件，否则 setIgnoresMouseEvents_(True) → 点穿到桌面 ✅。
+    #
+    # 读鼠标位置用 CGEventCreate(None) —— **不需要任何系统授权**（实测 ✅）。
+    saved_at = [0.0]
+
+    def _tick(_timer):
+        # ⚠️ 计时器里**绝对不能漏异常**：pyobjc 会把 ObjC 回调里的 Python 异常
+        #    直接变成进程 abort（连 traceback 都不一定打得出来 ✗）。
+        #    我们踩过一次：这里少 import 了 `time`，窗口起来 80ms 后整个进程消失，
+        #    日志里只剩一片空白。所以**整个身体都包起来**。
+        try:
+            loc = CGEventGetLocation(CGEventCreate(None))
+            frame = panel.frame()
+
+            if click_through:
+                if bridge._dragging:
+                    # 拖拽中：一律接收鼠标事件（否则会把自己"点穿"掉，拖到一半断掉）
+                    panel.setIgnoresMouseEvents_(False)
+                else:
+                    rects = bridge._hot_rects
+                    # 网页还没报到时先当"能点"处理，免得它自己都点不了
+                    inside = True
+                    if rects:
+                        # 屏幕坐标 → 窗口内坐标。
+                        # ⚠️ AppKit 原点在**左下**、网页在**左上**，所以 y 要翻过来。
+                        rel_x = loc.x - frame.origin.x
+                        rel_y = (frame.origin.y + frame.size.height) - loc.y
+                        slack = 6.0  # 边缘留点容差，免得反复抖动
+                        inside = any(
+                            (r["x"] - slack) <= rel_x <= (r["x"] + r["w"] + slack)
+                            and (r["y"] - slack) <= rel_y <= (r["y"] + r["h"] + slack)
+                            for r in rects
+                        )
+                    panel.setIgnoresMouseEvents_(not inside)
+
+            # 顺手把窗口位置记下来（拖动后 1 秒落一次盘，别每帧都写文件）
+            now = time.monotonic()
+            if bridge._dirty and now - saved_at[0] > 1.0:
+                saved_at[0] = now
+                bridge._dirty = False
+                _save_origin(state_path, frame.origin)
+        except Exception as exc:  # noqa: BLE001 - 看得见 > 静默消失
+            print("置顶小条：内部计时器出错：{}".format(exc), flush=True)
+
+    # 12.5 Hz：够跟手，又几乎不耗电（每次只做一次坐标比较）
+    NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.08, True, _tick)
 
     panel.orderFrontRegardless()  # 显示，但**不激活**（不抢焦点）
     view.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(url)))
