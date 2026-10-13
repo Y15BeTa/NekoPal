@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -274,6 +275,11 @@ def run_pet(
     settings = settings or load_settings()
     base = "http://{}:{}".format(settings.host, settings.port)
 
+    # ⚠️ **先收掉旧后端** ✗ —— App 必须是唯一 owner ✗
+    #    不然会出现「关 App 收不掉人物 / 下次复用旧代码」的鬼故事 ✗（真踩过）
+    if not hidden:
+        reclaim_backend(settings)
+
     child: Optional[subprocess.Popen] = None
     if not backend_alive(base):
         print("后端未运行，正在拉起…")
@@ -332,6 +338,68 @@ def spawn_pet(settings: Settings) -> Optional[subprocess.Popen]:
         return subprocess.Popen(cmd, stdout=sink, stderr=subprocess.STDOUT)
     except Exception:  # noqa: BLE001
         return None
+
+
+def reclaim_backend(settings: Settings) -> None:
+    """把端口上那个**旧 nekopal 后端**收掉，好让本次 App 起一个全新的。
+
+    ## 为什么必须这么做（真踩过 ✗）
+
+    早先 `run_app` 只是"后端没在跑才起" ✗ —— 于是：
+
+      · 有人（脚本 / 上次没收干净 ✗）已经在跑一个后端
+        → App **不自己起** → 也**不拥有**它 ✗
+      · 关 App 时**不会收掉**它 ✗ → 下次开 App 又**复用它** ✗
+      · 结果：**永远在跑旧代码** ✗，而且**角色窗口归那个旧后端管** ✗
+        → 关 App 时人物也不关 ✗（用户报的正是这个 ✗）
+
+    ⇒ 结论：**App 必须是唯一 owner** ✗。开 App = 全新一套 ✗，关 App = 全清 ✗。
+    """
+
+    port = settings.port
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", "-t", "-iTCP:{}".format(port), "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except Exception:  # noqa: BLE001 - 没有 lsof 就算了
+        return
+
+    for raw in out.split():
+        try:
+            pid = int(raw)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        try:
+            cmd = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout
+        except Exception:  # noqa: BLE001
+            continue
+        # ⚠️ 只收**自家的**：端口上可能是别的东西 ✗
+        if "nekopal" not in cmd:
+            continue
+        print(
+            "发现旧的 NekoPal 后端（PID {}）—— 收掉它，本次起一个全新的".format(pid),
+            flush=True,
+        )
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:  # noqa: BLE001
+            continue
+
+    # 等它真的退（最多 5 秒 ✗）
+    for _ in range(50):
+        if not backend_alive("http://{}:{}".format(settings.host, port)):
+            return
+        time.sleep(0.1)
 
 
 def run_app(
