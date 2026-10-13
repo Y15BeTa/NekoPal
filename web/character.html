@@ -72,16 +72,19 @@
     <span class="dot" id="dot" title="跟读窗状态"></span>
   </div>
   <!--
-    Live2D 渲染栈。**顺序不能反**：
+    Live2D 渲染栈：
       ① Cubism Core —— Live2D 官方专有运行时（从 ~/.config/nekopal/core/ 本地中转）
-      ② pixi.js
-      ③ pixi-live2d-display 的 cubism4 包（它把自己挂到全局 PIXI 上）
+      ② pet.js      —— **我们自己的**渲染外壳，用官方 Cubism 5 框架打包而成
+                       （character.js 里动态 import；里面含官方框架，故不进仓库）
+
+    ⚠️ 为什么不用 pixi-live2d-display：那个库按 Cubism **4** 写，与 Core **5**
+    的多处结构对不上（canvasinfo / vertexPositions / drawOrders），硬接会散架。
+    官方框架和 Core 5 是配套的。
+
     任一个失败都不影响别的功能：角色退回 🐱 占位（见 character.js），
     朗读、悬停按钮、拖拽、精确命中全都照常。
   -->
   <script src="/api/avatar-core/live2dcubismcore.min.js"></script>
-  <script src="vendor/pixi.min.js"></script>
-  <script src="vendor/cubism4.js"></script>
   <script src="character.js" type="module"></script>
 </body>
 </html>

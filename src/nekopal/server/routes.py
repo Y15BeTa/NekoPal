@@ -536,6 +536,17 @@ def build_router(runtime: Runtime) -> APIRouter:
             )
         return {"characters": out, "active": out[0]["id"] if out else None}
 
+    @router.get("/avatar-l2d/{file_path:path}")
+    async def avatar_l2d(file_path: str) -> FileResponse:
+        """我们自己的 Live2D 渲染外壳（esbuild 打出来的 ``pet.js`` + 着色器）。
+
+        ⚠️ 它**不进仓库**：里面打包了 Live2D 官方的 **Cubism 5 框架**，
+        与 Cubism Core 同属 Live2D 的组件，所以放在 ``~/.config/nekopal/l2d/``，
+        和 Core 一样只做**本地中转**。
+        """
+
+        return _outside_file(config_dir() / "l2d", file_path, "L2D")
+
     @router.get("/avatar-core/{name}")
     async def avatar_core(name: str) -> FileResponse:
         """Live2D 官方的 **Cubism Core**（专有运行时，**不进仓库**）。
