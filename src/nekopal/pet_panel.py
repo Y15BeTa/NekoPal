@@ -169,8 +169,10 @@ def run(
             # 正在拖拽 —— 这期间**必须暂停"点穿"判定**：
             # 拖动时鼠标很容易瞬间滑出可点区域，判定就会把窗口设成穿透 → 拖拽断掉 ✗
             self._dragging = False
-            # 上一次的命中判定（只在变化时才真正去设 ignoresMouseEvents）
-            self._inside: object = None
+            # 当前是否把窗口设成"点穿"
+            self._ignoring: object = None
+            # 按钮列现在是显示还是收起（None = 还没定过）
+            self._hover_shown: object = None
             # 🛡️ 保险：**至少见过一次"鼠标在身上"之前，绝不开启穿透**
             self._ever_inside = False
             return self
@@ -222,6 +224,14 @@ def run(
                         ),
                         flush=True,
                     )
+            elif action == "hover":
+                # 网页的回执：证明 __nekopalHover 真的跑到了
+                print(
+                    "置顶小条：按钮列{}（网页确认）".format(
+                        "已显示" if getter("on") else "已收起"
+                    ),
+                    flush=True,
+                )
             elif action == "hello":
                 # 页面加载完的第一声 —— 日志里有它，就证明网页**真的渲染出来了**
                 print("置顶小条：网页已加载 ✅（原生外壳里正常渲染）", flush=True)
@@ -335,6 +345,29 @@ def run(
     ticks = [0]
     warned = [False]
 
+    def _report_js_error(_result, error) -> None:
+        """evaluateJavaScript 的回调：只在**出错**时说话（平时闭嘴）。"""
+        if error is not None:
+            print("置顶小条：通知网页时出错：{}".format(error), flush=True)
+
+    def _tell_page_hover(on: bool) -> None:
+        """告诉网页「鼠标还在我身上吗」—— 用来显示 / 收起按钮列。
+
+        ⚠️ 为什么由**原生**来驱动，而不是让网页自己用 CSS ``:hover``：
+        鼠标一离开可点区域，我们就把窗口设成"点穿"，网页**收不到 mouseleave**，
+        ``:hover`` 会卡住 → 按钮永远不消失 ✗（用户实测踩到）。
+        只有原生才知道鼠标到底还在不在角色身上，所以由它说了算。
+        """
+        try:
+            view.evaluateJavaScript_completionHandler_(
+                "window.__nekopalHover && window.__nekopalHover({})".format(
+                    "true" if on else "false"
+                ),
+                _report_js_error,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print("置顶小条：通知网页失败：{}".format(exc), flush=True)
+
     def _tick(_timer):
         # ⚠️ 计时器里**绝对不能漏异常**：pyobjc 会把 ObjC 回调里的 Python 异常
         #    直接变成进程 abort（连 traceback 都不一定打得出来 ✗）。
@@ -384,40 +417,48 @@ def run(
                                 ),
                                 flush=True,
                             )
+                    else:
+                        # 网页还没报到 —— 先什么都别动（默认：能点、按钮不显示）
+                        inside = None
 
-                if inside:
-                    bridge._ever_inside = True
+                if inside is not None:
+                    if inside:
+                        bridge._ever_inside = True
 
-                # 🛡️ 保险：在"见过鼠标进身上"之前**绝不开启穿透**。
-                #    万一以后坐标又算错，最坏只是"透明区域挡鼠标"（能忍），
-                #    而不是"整个窗口点不动、像死机"（不能忍）✗
-                if inside or not bridge._ever_inside:
-                    if bridge._inside is not False:
-                        bridge._inside = False
-                        panel.setIgnoresMouseEvents_(False)
+                    # 🛡️ 保险：在"见过鼠标进身上"之前**绝不开启穿透**。
+                    #    万一以后坐标又算错，最坏只是"透明区域挡鼠标"（能忍），
+                    #    而不是"整个窗口点不动、像死机"（不能忍）✗
+                    should_ignore = (not inside) and bridge._ever_inside
+                    if should_ignore is not bridge._ignoring:
+                        bridge._ignoring = should_ignore
+                        panel.setIgnoresMouseEvents_(should_ignore)
+
+                    # 显示 / 收起按钮 —— **由原生通知网页**（见 _tell_page_hover）。
+                    # ⚠️ 这一步要跟着「在不在身上」走，**不能跟着"穿透"走**：
+                    #    保险会让穿透晚一步生效，跟错的话按钮和穿透状态会打架 ✗
+                    if inside is not bridge._hover_shown:
+                        bridge._hover_shown = inside
+                        _tell_page_hover(inside)
                         print(
-                            "置顶小条：鼠标在「可点区域」上 → 正常接收点击 ✅"
-                            "（窗口内 {:.0f},{:.0f}）".format(rel_x or 0, rel_y or 0),
+                            "置顶小条：鼠标{}「可点区域」（窗口内 {:.0f},{:.0f}）→ {}".format(
+                                "进入" if inside else "离开",
+                                rel_x or 0,
+                                rel_y or 0,
+                                "正常接收点击 ✅" if inside else "点穿桌面、收起按钮 ✨",
+                            ),
                             flush=True,
                         )
-                elif bridge._inside is not True:
-                    bridge._inside = True
-                    panel.setIgnoresMouseEvents_(True)
-                    print(
-                        "置顶小条：鼠标离开可点区域 → 点穿桌面 ✨"
-                        "（窗口内 {:.0f},{:.0f}）".format(rel_x or 0, rel_y or 0),
-                        flush=True,
-                    )
 
-                # 4 秒了还没见过鼠标进身上 → 坐标大概算错了。**吵出来**，
-                # 不然它会静默地"从不穿透"，下次又要从头查一遍 ✗
-                if not bridge._ever_inside and not warned[0] and ticks[0] > 50:
-                    warned[0] = True
-                    print(
-                        "置顶小条：⚠️ 一直没见到鼠标进入「可点区域」—— 坐标换算可能不对，"
-                        "「点穿」暂不生效（不挡你，但也没生效）",
-                        flush=True,
-                    )
+                    # 12 秒了还没见过鼠标进身上 → 可能是坐标算错了。提一句，
+                    # 但说清楚"如果本来就没移过去，那是正常的"（免得误报吓人）
+                    if not bridge._ever_inside and not warned[0] and ticks[0] > 150:
+                        warned[0] = True
+                        print(
+                            "置顶小条：还没见过鼠标进入「可点区域」"
+                            "（如果还没把鼠标移到猫身上，这是正常的；"
+                            "移过去了却没反应才是坐标算错）",
+                            flush=True,
+                        )
 
             # 顺手把窗口位置记下来（拖动后 1 秒落一次盘，别每帧都写文件）
             now = time.monotonic()
@@ -430,7 +471,6 @@ def run(
 
     # 12.5 Hz：够跟手，又几乎不耗电（每次只做一次坐标比较）
     NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.08, True, _tick)
-
     panel.orderFrontRegardless()  # 显示，但**不激活**（不抢焦点）
     view.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(url)))
     print(

@@ -52,7 +52,7 @@ body {
   50%      { transform: scale(1.045) translateY(-4px); }
 }
 
-/* 没有跟读窗连着时变灰（和按钮的灰点联动） */
+/* 没有跟读窗连着时变灰（和状态点联动） */
 .stage.offline .avatar {
   filter: grayscale(1) drop-shadow(0 10px 26px rgba(0, 0, 0, 0.3));
   opacity: 0.5;
@@ -61,59 +61,72 @@ body {
 /* ── 悬停才出现的半透明按钮列 ─────────────────────────────────── */
 
 .actions {
-  pointer-events: auto; /* 注意：opacity:0 也照样能收到 hover，正是我们要的 */
+  pointer-events: auto;
   position: absolute;
   left: 12px;
   top: 50%;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  opacity: 0; /* 平时藏起来 */
-  transform: translateY(-50%) translateX(-6px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(-50%) translateX(-7px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-/* 鼠标移到角色身上（或按钮上）才浮出来 */
-.character:hover ~ .actions,
-.actions:hover {
+/*
+ * ⚠️ 收起/展开**由原生驱动**（加 .revealed 类），不用 CSS :hover：
+ * 鼠标一离开可点区域，原生就把窗口设成"点穿"，网页**收不到 mouseleave**，
+ * :hover 会卡住 → 按钮永不消失 ✗（用户实测踩到）。
+ * 只有原生才知道鼠标到底还在不在身上。
+ */
+.stage.revealed .actions {
   opacity: 1;
   transform: translateY(-50%) translateX(0);
 }
 
+/* 在浏览器里直接预览 / pywebview 外壳下没有原生驱动 → 退回 :hover */
+body:not(.native) .character:hover ~ .actions,
+body:not(.native) .actions:hover {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* 浅色毛玻璃圆钮：比深色块轻，配 macOS 的调子 */
 .actions button {
-  width: 36px;
-  height: 36px;
-  border: 0;
+  width: 34px;
+  height: 34px;
+  border: 0.5px solid rgba(255, 255, 255, 0.5);
   border-radius: 50%;
-  background: rgba(38, 34, 44, 0.55); /* 半透明 */
+  background: rgba(255, 255, 255, 0.25);
   color: #fff;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  /* 关键：浅底上的白字靠它才看得清（深浅壁纸都成立） */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  backdrop-filter: blur(14px) saturate(170%);
   transition: background 0.15s ease, transform 0.12s ease;
 }
 
 .actions button:hover {
-  background: rgba(38, 34, 44, 0.85);
-  transform: scale(1.09);
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .actions button:active {
-  transform: scale(0.95);
+  transform: scale(0.94);
 }
 
 #close:hover {
-  background: rgba(220, 76, 76, 0.85);
+  background: rgba(255, 122, 122, 0.55);
 }
 
 /* 分隔线（分组：播放控制 ｜ 停止 / 关闭） */
 .actions .sep {
   height: 1px;
-  margin: 1px 8px;
-  background: rgba(255, 255, 255, 0.22);
+  margin: 2px 8px;
+  background: rgba(255, 255, 255, 0.45);
 }
 
 /* ── 状态点 ──────────────────────────────────────────────────── */
@@ -132,6 +145,6 @@ body {
 }
 
 .stage.offline .dot {
-  background: #9aa0a6;
+  background: #cfd4d8;
   box-shadow: none;
 }

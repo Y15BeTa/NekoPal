@@ -24,6 +24,22 @@ function toNative(action, extra = {}) {
   }
 }
 
+// 原生外壳：给 body 打个记号，让 CSS 知道"按钮由原生驱动，别用 :hover"
+if (native) document.body.classList.add('native');
+
+/**
+ * **由原生调用**：显示 / 收起按钮列。
+ *
+ * 为什么不让网页自己用 CSS `:hover` 判断：鼠标一离开可点区域，原生就把窗口
+ * 设成"点穿"，网页**收不到 mouseleave** → hover 卡住 → 按钮永远不消失 ✗
+ * （用户实测踩到）。只有原生才知道鼠标到底还在不在角色身上。
+ */
+window.__nekopalHover = (on) => {
+  stage.classList.toggle('revealed', !!on);
+  // 回执给原生：日志里能看到"按钮已显示/已收起"，就证明 JS 真的被执行了 ✅
+  toNative('hover', { on: !!on });
+};
+
 // ── 控制 ────────────────────────────────────────────────────────────────
 
 async function send(action) {
