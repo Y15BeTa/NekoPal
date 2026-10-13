@@ -188,6 +188,8 @@ def public_status() -> Dict[str, Any]:
         "has_key": bool(str(c.get("api_key") or "").strip()),
         "has_profile": bool(profile),
         "profile_chars": len(profile),
+        # 性格文档填了没 ✗ —— 只关心**你自己的那份**（仓库里的示例不算 ✗）
+        "has_persona": _own_persona_exists(),
         "chat_file": str(chat_file()),
         "profile_file": str(profile_file()),
     }
@@ -276,3 +278,26 @@ def generate_line(character_id: Optional[str], scene: str = "") -> Dict[str, Any
     if not line:
         raise RuntimeError("LLM 没说出有效内容")
     return {"text": line, "model": str(cfg["model"])}
+
+def _own_persona_exists() -> bool:
+    """**工作区里**那份 persona.md 存在吗 ✗（仓库里的示例不算 ✗）。"""
+
+    try:
+        from nekopal.packs import config_dir
+
+        cid = str(load_config().get("character") or "")  # 占位：下面用 ui.json 更准
+        del cid
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import json as _json
+
+        from nekopal.packs import config_dir
+
+        data = _json.loads((config_dir() / "ui.json").read_text(encoding="utf-8"))
+        cid = str((data or {}).get("character") or "").strip()
+        if not cid:
+            return False
+        return (config_dir() / "characters" / cid / "persona.md").is_file()
+    except Exception:  # noqa: BLE001
+        return False

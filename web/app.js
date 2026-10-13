@@ -594,8 +594,10 @@ async function loadChatStatus() {
       : '未填 ⬜'),
     '📄 我的信息：' + d.profile_file +
       (d.has_profile ? '（已填 ' + d.profile_chars + ' 字 ✅）' : '（还是空模板 ⬜）'),
-    '🎭 角色性格：~/.config/nekopal/characters/<角色 id>/persona.md',
-    '   （没写的话会退回仓库里的示例 characters/example-rana/persona.md）',
+    '🎭 角色性格：' +
+      (d.has_persona
+        ? '已填 ✅ ~/.config/nekopal/characters/<角色 id>/persona.md'
+        : '未填 ⬜（会用仓库里的示例 characters/example-rana/persona.md）'),
     '⚠️ 两条红线：api_key 别提交进任何仓库；profile.md 里别放不该外发的东西',
   ];
 
