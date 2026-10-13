@@ -21,6 +21,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # 把主窗**选过的音色**捞回来 ✗ ——
+        # 不然后端一重启就退回默认音色（界面上明明选着要楽奈，说出来却是晓晓 ✗）。
+        # ⚠️ 这里只**读文件 + 赋值** ✗ —— 绝不 spawn 任何子进程 ✗
+        #    （在 lifespan 里 spawn 会把后端启动卡死、整个 App 白屏 ✗，踩过 ✗）
+        _restore_ui_voice(runtime)
         await runtime.warmup()
         # ⚠️ **不要在这里拉起角色窗口** ✗ —— 踩过：在 lifespan 里 spawn 子进程
         #    会把后端的启动卡住 ✗ → 后端永远不开始服务 ✗ → **整个 App 白屏** ✗。
@@ -73,3 +78,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
 
 app = create_app()
+
+def _restore_ui_voice(runtime: "Runtime") -> None:
+    """把 `ui.json` 里记着的音色，套回本次后端进程 ✗。
+
+    为什么需要：主窗那个下拉只是 `PUT /api/settings` ✗，
+    而那是**内存**里的值 ✗ —— 后端一重启就没了 ✗。
+    """
+
+    try:
+        import json as _json
+
+        from nekopal.packs import config_dir
+
+        data = _json.loads((config_dir() / "ui.json").read_text(encoding="utf-8"))
+        voice = str((data or {}).get("voice") or "").strip()
+        if voice:
+            runtime.settings.default_voice = runtime.tts.resolve_voice_id(voice)
+    except Exception:  # noqa: BLE001 - 没有 / 坏了就用默认，不是错误 ✗
+        pass

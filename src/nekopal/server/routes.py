@@ -37,7 +37,9 @@ def _load_ui() -> dict:
     （音色不在这儿 —— 它由主窗的 localStorage + `/api/packs` 已经管好了 ✗）。
     """
 
-    defaults = {"show_avatar": True, "character": None, "outfit": None}
+    #: `voice` 存的是**主窗那个下拉选的音色** ✗ ——
+    #: 后端重启也不该丢（默认值不是用户的意愿 ✗）
+    defaults = {"show_avatar": True, "character": None, "outfit": None, "voice": None}
     try:
         data = json.loads(_ui_file().read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - 没有 / 坏了都当默认值
@@ -269,6 +271,9 @@ def build_router(runtime: Runtime) -> APIRouter:
         settings = runtime.settings
         if isinstance(data.get("default_voice"), str):
             settings.default_voice = runtime.tts.resolve_voice_id(data["default_voice"])
+            # ⚠️ 顺手存一份 ✗ —— 光改内存的话，后端一重启就回到默认音色 ✗
+            #    （用户会看到"我在界面上选了要楽奈，说出来的却是晓晓 ✗"✗）
+            _save_ui({"voice": settings.default_voice})
         if isinstance(data.get("rate"), (int, float)):
             settings.rate = float(data["rate"])
         if isinstance(data.get("clean"), list):
@@ -690,6 +695,41 @@ def build_router(runtime: Runtime) -> APIRouter:
             "show_avatar": bool(_load_ui().get("show_avatar", True)),
         }
 
+    def _avatar_voice(character_id: Optional[str]) -> str:
+        """角色说话用哪个音色 ✗。
+
+        优先级（**用户明确选过的优先** ✗）：
+
+        1. `ui.json` 里的 `voice` ✗ —— 主窗顶栏那个下拉选的就是它
+        2. **角色包自己声明的 `voice:`** ✗（以前它是个摆设 ✗，从没被用过 ✗）
+        3. 后端默认值 ✗
+
+        ⚠️ 为什么要持久化第 1 条：早先主窗只是 `PUT /api/settings` ✗，
+        而那是**内存**里的值 ✗ —— 后端一重启就回到 "晓晓" ✗，
+        用户却明明在界面上选了要楽奈 ✗（"我从来没改过它 ✗"就是这么来的 ✗）。
+        """
+
+        ui_voice = str(_load_ui().get("voice") or "").strip()
+        if ui_voice:
+            return runtime.tts.resolve_voice_id(
+                ui_voice, fallback=runtime.settings.fallback_voice
+            )
+
+        pack_voice = ""
+        if character_id:
+            try:
+                for pack in load_packs().characters:
+                    if pack.id == character_id:
+                        pack_voice = pack.voice or ""
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+
+        return runtime.tts.resolve_voice_id(
+            pack_voice or runtime.settings.default_voice,
+            fallback=runtime.settings.fallback_voice,
+        )
+
     # -- 角色语音（点一下角色时说一句 ✗）-----------------------------------
     #: 默认台词。角色包可以在 character.yaml 里用 `voice_lines:` 覆盖 ✗。
     #: 短句很重要 ✗：RVC 变声一句约 1.7 秒，太长会等 ✗（同句第二次走缓存 ✗）
@@ -730,6 +770,7 @@ def build_router(runtime: Runtime) -> APIRouter:
         try:
             payload = await request.json()
             text = str((payload or {}).get("text") or "").strip()
+            character = str((payload or {}).get("character") or "").strip() or None
         except Exception:  # noqa: BLE001
             raise _invalid("要传 {\"text\": \"...\"}") from None
         if not text:
@@ -741,10 +782,8 @@ def build_router(runtime: Runtime) -> APIRouter:
         if not sentences:
             raise _invalid("清洗后没有可读的内容")
 
-        # 用的就是「默认音色」✗ —— 也就是主窗选的那个（可能是要楽奈 RVC ✗）
-        voice = runtime.tts.resolve_voice_id(
-            runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
-        )
+        # 角色说话：**用户选过的音色 > 角色包声明的 > 后端默认** ✗
+        voice = _avatar_voice(character)
         try:
             segment, cached = await synthesize_sentence(
                 sentences[0],
@@ -857,9 +896,7 @@ def build_router(runtime: Runtime) -> APIRouter:
         if not sentences:
             raise _invalid("清洗后没有可读的内容")
 
-        voice = runtime.tts.resolve_voice_id(
-            runtime.settings.default_voice, fallback=runtime.settings.fallback_voice
-        )
+        voice = _avatar_voice(character)
         segment, cached = await synthesize_sentence(
             sentences[0],
             voice,
