@@ -198,7 +198,14 @@ def run(
         NSWindowStyleMaskNonactivatingPanel,
     )
     from Foundation import NSURL, NSObject, NSTimer, NSURLRequest
-    from Quartz import CGEventCreate, CGEventGetLocation
+    from Quartz import (
+        CGEventCreate,
+        CGEventGetLocation,
+        CGEventSourceButtonState,
+        kCGEventSourceStateCombinedSessionState,
+        kCGMouseButtonLeft,
+        kCGMouseButtonRight,
+    )
     from WebKit import WKWebsiteDataStore, WKWebView, WKWebViewConfiguration
 
     # ⚠️ 不把 `WKScriptMessageHandler` 放进基类：pyobjc 下
@@ -229,6 +236,9 @@ def run(
             self._hover_shown: object = None
             # 🛡️ 保险：**至少见过一次"鼠标在身上"之前，绝不开启穿透**
             self._ever_inside = False
+            # 右键菜单现在开着吗 / 上一帧鼠标是不是按着的（做边沿检测 ✗）
+            self._menu_open = False
+            self._was_down = False
             return self
 
         def userContentController_didReceiveScriptMessage_(  # noqa: N802
@@ -272,6 +282,9 @@ def run(
                         "置顶小条：窗口缩放到 {}×{}".format(int(width), int(height)),
                         flush=True,
                     )
+            elif action == "menu":
+                # 网页告诉我们右键菜单开了 / 关了 —— 关菜单要靠原生 ✗
+                self._menu_open = bool(getter("open"))
             elif action == "dragging":
                 self._dragging = bool(getter("on"))
             elif action == "hot":
@@ -428,6 +441,13 @@ def run(
         if error is not None:
             print("置顶小条：通知网页时出错：{}".format(error), flush=True)
 
+    def _call_js(expression: str) -> None:
+        """在网页里跑一句 JS（失败就算了 ✗）。"""
+        try:
+            view.evaluateJavaScript_completionHandler_(expression, _report_js_error)
+        except Exception as exc:  # noqa: BLE001
+            print("置顶小条：通知网页失败：{}".format(exc), flush=True)
+
     def _tell_page_hover(on: bool) -> None:
         """告诉网页「鼠标还在我身上吗」—— 用来显示 / 收起按钮列。
 
@@ -436,15 +456,11 @@ def run(
         ``:hover`` 会卡住 → 按钮永远不消失 ✗（用户实测踩到）。
         只有原生才知道鼠标到底还在不在角色身上，所以由它说了算。
         """
-        try:
-            view.evaluateJavaScript_completionHandler_(
-                "window.__nekopalHover && window.__nekopalHover({})".format(
-                    "true" if on else "false"
-                ),
-                _report_js_error,
+        _call_js(
+            "window.__nekopalHover && window.__nekopalHover({})".format(
+                "true" if on else "false"
             )
-        except Exception as exc:  # noqa: BLE001
-            print("置顶小条：通知网页失败：{}".format(exc), flush=True)
+        )
 
     def _tick(_timer):
         # ⚠️ 计时器里**绝对不能漏异常**：pyobjc 会把 ObjC 回调里的 Python 异常
@@ -500,7 +516,6 @@ def run(
                 if inside is not None:
                     if inside:
                         bridge._ever_inside = True
-
                     # 🛡️ 保险：在"见过鼠标进身上"之前**绝不开启穿透**。
                     #    万一以后坐标又算错，最坏只是"透明区域挡鼠标"（能忍），
                     #    而不是"整个窗口点不动、像死机"（不能忍）✗
@@ -535,6 +550,29 @@ def run(
                             "移过去了却没反应才是坐标算错）",
                             flush=True,
                         )
+
+            # 菜单开着的时候：光标在窗口**外面**按下鼠标 → 让网页关掉菜单 ✗
+            # （窗口外面是"点穿"的 ✗，网页收不到那次点击 ✗ —— 只有原生知道 ✗）
+            if click_through and bridge._menu_open and inside is False:
+                down = bool(
+                    CGEventSourceButtonState(
+                        kCGEventSourceStateCombinedSessionState, kCGMouseButtonLeft
+                    )
+                    or CGEventSourceButtonState(
+                        kCGEventSourceStateCombinedSessionState, kCGMouseButtonRight
+                    )
+                )
+                # ⚠️ 不做边沿检测 ✗：轮询只有 12.5Hz，**快点一下**（按下+松开都在 80ms 内）
+                #    会被漏掉 ✗。所以只要"按着"就通知 ✗；
+                #    页面关掉菜单后会回报 menu:false ✗，重复调用自然就停了 ✅
+                if down:
+                    print("置顶小条：窗口外点击 → 收起右键菜单", flush=True)
+                    _call_js(
+                        "window.__nekopalCloseMenu && window.__nekopalCloseMenu()"
+                    )
+                bridge._was_down = down
+            else:
+                bridge._was_down = False
 
             # 顺手把窗口位置记下来（拖动后 1 秒落一次盘，别每帧都写文件）
             now = time.monotonic()

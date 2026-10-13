@@ -201,14 +201,24 @@ function openMenu(builder) {
   menu.textContent = '';
   builder();
   menu.hidden = false;
+  toNative('menu', { open: true }); // 告诉原生：菜单开着 ✗（关菜单要靠它 ✗）
   reportHotRects();
 }
 
 function closeMenu() {
   if (menu.hidden) return;
   menu.hidden = true;
+  toNative('menu', { open: false });
   reportHotRects();
 }
+
+/**
+ * **由原生调用**：光标在窗口外面点了鼠标 → 关掉菜单 ✗。
+ *
+ * 为什么需要：窗口外面是"点穿"的 ✗，网页**收不到**那次点击 ✗，
+ * 所以只能由原生（它能读到全局鼠标按键 ✗）来通知 ✗。
+ */
+window.__nekopalCloseMenu = () => closeMenu();
 
 function currentOutfitInfo() {
   return (avatarInfo?.outfits || []).find((o) => o.folder === currentOutfit) || null;
