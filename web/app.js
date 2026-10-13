@@ -488,113 +488,84 @@ if (els.activityPanel) {
   });
 }
 
-// ── 形象下拉（主窗 ↔ 角色窗口 共享）──────────────────────────────────────
-// 音色下拉在顶栏本来就有；形象这块：写进后端 /api/ui，
-// 角色窗口每 3 秒轮询一次 → 跟着换（两个进程只能这么通信）。
-// 选「不开人物」= show_avatar:false → 角色窗口会自己退出。
-async function initOutfitPicker() {
-  const sel = document.getElementById('outfit');
-  if (!sel) return;
+// ── 人物形象：开关 + 角色下拉 + 换装下拉（两个窗口共享）────────────────
+// 和音色一样写进后端 /api/ui；角色窗口每 3 秒轮询 → 跟着换 / 自己退出。
+// ⚠️ 「6 套衣服」不是 6 个形象 ✗ —— 它们都属于同一个角色（要楽奈 ✗），
+//    那是**换装**的差别 ✗。所以这里分成「角色」和「换装」两个下拉 ✗。
+async function initAvatarPickers() {
+  const on = document.getElementById('avatarOn');
+  const charSel = document.getElementById('character');
+  const outfitSel = document.getElementById('outfit');
+  if (!on || !charSel || !outfitSel) return;
 
   let info;
   try {
     info = await (await fetch('/api/avatar')).json();
   } catch (err) {
-    sel.disabled = true;
+    on.disabled = charSel.disabled = outfitSel.disabled = true;
     return;
   }
 
-  const active = (info.characters || []).find((c) => c.id === info.active);
-  const outfits = active?.outfits || [];
+  const characters = info.characters || [];
+  on.checked = info.show_avatar !== false;
+  on.disabled = characters.length === 0;
 
-  sel.innerHTML = '';
-  const off = document.createElement('option');
-  off.value = '';
-  off.textContent = '不开人物';
-  sel.append(off);
-
-  for (const o of outfits) {
-    const opt = document.createElement('option');
-    opt.value = o.folder;
-    // 把「有几个动作/表情/有没有物理」直接写在选项里 —— 差异很大，选之前就该看见
-    const bits = [];
-    if (o.motions.length) bits.push(o.motions.length + ' 组动作');
-    if (o.expressions.length) bits.push(o.expressions.length + ' 表情');
-    if (o.physics) bits.push('物理');
-    opt.textContent = o.label + (bits.length ? '　' + bits.join(' · ') : '');
-    sel.append(opt);
+  function fillOutfits() {
+    const c = characters.find((x) => x.id === charSel.value);
+    const outfits = c?.outfits || [];
+    outfitSel.innerHTML = '';
+    for (const o of outfits) {
+      const opt = document.createElement('option');
+      opt.value = o.folder;
+      // 把「几组动作 / 几个表情 / 有没有物理」写在选项里 —— 差异很大，选之前就该看见
+      const bits = [];
+      if (o.motions.length) bits.push(o.motions.length + ' 组动作');
+      if (o.expressions.length) bits.push(o.expressions.length + ' 表情');
+      if (o.physics) bits.push('物理');
+      opt.textContent = o.label + (bits.length ? '　' + bits.join(' · ') : '');
+      outfitSel.append(opt);
+    }
+    const byUi = outfits.find((o) => o.folder === info.active_outfit);
+    const byCfg = outfits.find((o) => c?.model?.startsWith(o.path));
+    outfitSel.value = (byUi || byCfg)?.folder || outfits[0]?.folder || '';
+    outfitSel.disabled = !on.checked || !outfits.length;
   }
 
-  // 初始选中：ui.json 里选过的优先，否则用 character.yaml 配的那个
-  const byUi = outfits.find((o) => o.folder === info.active_outfit);
-  const byCfg = outfits.find((o) => active?.model?.startsWith(o.path));
-  sel.value = (byUi || byCfg)?.folder || '';
+  charSel.innerHTML = '';
+  for (const c of characters) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.name;
+    charSel.append(opt);
+  }
+  charSel.value = info.active_character || characters[0]?.id || '';
+  fillOutfits();
 
-  sel.addEventListener('change', async () => {
-    const folder = sel.value;
+  async function save() {
     try {
       await fetch('/api/ui', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ show_avatar: !!folder, outfit: folder || null }),
+        body: JSON.stringify({
+          show_avatar: on.checked,
+          character: charSel.value || null,
+          outfit: outfitSel.value || null,
+        }),
       });
     } catch (err) {
-      // 失败就算了 —— 下次再点
+      // 失败算了 —— 下次再点
     }
+  }
+
+  on.addEventListener('change', async () => {
+    outfitSel.disabled = !on.checked;
+    await save();
   });
+  charSel.addEventListener('change', async () => {
+    fillOutfits();
+    await save();
+  });
+  outfitSel.addEventListener('change', save);
 }
 
-initOutfitPicker();
-
-// ── 口型同步：把音频电平报给后端（角色窗口轮询它来张嘴）────────────────
-// 为什么要在主窗做：音频在这里的 <audio> 里，角色窗口是**另一个进程**，够不着。
-// ⚠️ `createMediaElementSource` 会把音频**改道** ✗ —— 必须再接回 destination ✗，
-//    否则就**没声音了**（这是最容易踩的坑 ✗）。
-let __lipAnalyser = null;
-let __lipBuf = null;
-let __lipLast = 0;
-
-function reportLip() {
-  if (!__lipAnalyser) return;
-  __lipAnalyser.getByteTimeDomainData(__lipBuf);
-  let sum = 0;
-  for (let i = 0; i < __lipBuf.length; i++) {
-    const v = (__lipBuf[i] - 128) / 128;
-    sum += v * v;
-  }
-  const rms = Math.sqrt(sum / __lipBuf.length);
-  // 经验映射：rms < 0.02 当静音；0.15 以上算大张嘴 ✗
-  const level = Math.max(0, Math.min(1, (rms - 0.02) * 6));
-  // 变化很小就不发（省点请求 ✗）；静音也要偶尔发一次，好让它闭嘴 ✗
-  const now = Date.now();
-  if (Math.abs(level - __lipLast) < 0.02 && level > 0 && now - __lipLast < 200) return;
-  __lipLast = level;
-  fetch('/api/lip', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ level }),
-  }).catch(() => {});
-}
-
-function initLipSync() {
-  const audio = document.getElementById('audio');
-  if (!audio) return;
-  const Ctx = window.AudioContext || window.webkitAudioContext;
-  if (!Ctx) return;
-  try {
-    const ctx = new Ctx();
-    const src = ctx.createMediaElementSource(audio);
-    __lipAnalyser = ctx.createAnalyser();
-    __lipAnalyser.fftSize = 256;
-    src.connect(__lipAnalyser);
-    __lipAnalyser.connect(ctx.destination); // ← 这一句不能少 ✗（不然没声音 ✗）
-    __lipBuf = new Uint8Array(__lipAnalyser.fftSize);
-    setInterval(reportLip, 70);
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-    report('lip', '口型同步已接上');
-  } catch (err) {
-    report('lip', '口型同步没接上：' + err);
-  }
-}
-
-initLipSync();
+initAvatarPickers();

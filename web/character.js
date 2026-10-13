@@ -454,7 +454,9 @@ async function boot() {
     return log('拿不到 /api/avatar：' + err);
   }
 
-  const active = (avatarInfo.characters || []).find((c) => c.id === avatarInfo.active);
+  const active =
+    (avatarInfo.characters || []).find((c) => c.id === avatarInfo.active_character) ||
+    (avatarInfo.characters || []).find((c) => c.id === avatarInfo.active);
   if (!active || !active.url) return log('没有「形象就绪」的角色包');
 
   // 主窗选中的形象优先（ui.json ✗）；没选过就用 character.yaml 里配的那个

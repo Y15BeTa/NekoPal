@@ -36,7 +36,7 @@ def _load_ui() -> dict:
     （音色不在这儿 —— 它由主窗的 localStorage + `/api/packs` 已经管好了 ✗）。
     """
 
-    defaults = {"show_avatar": True, "outfit": None}
+    defaults = {"show_avatar": True, "character": None, "outfit": None}
     try:
         data = json.loads(_ui_file().read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - 没有 / 坏了都当默认值
@@ -628,7 +628,11 @@ def build_router(runtime: Runtime) -> APIRouter:
 
     @router.put("/ui")
     async def put_ui(request: Request) -> dict:
-        """合并式更新（只传想改的字段 ✓）。"""
+        """合并式更新（只传想改的字段 ✓）。
+
+        改完立刻同步角色窗口的**开关** ✗ —— 勾上就拉起、取消就收掉，
+        不用等下次开 App ✅（谁负责起进程？`nekopal.pet_manager` ✗）。
+        """
 
         try:
             payload = await request.json()
@@ -636,7 +640,12 @@ def build_router(runtime: Runtime) -> APIRouter:
             raise _invalid("JSON 格式不对") from None
         if not isinstance(payload, dict):
             raise _invalid("要传一个对象")
-        return _save_ui(payload)
+
+        merged = _save_ui(payload)
+        from nekopal import pet_manager
+
+        pet_manager.ensure(bool(merged.get("show_avatar", True)))
+        return merged
 
     @router.get("/avatar")
     async def avatar() -> dict:
@@ -673,7 +682,8 @@ def build_router(runtime: Runtime) -> APIRouter:
         return {
             "characters": out,
             "active": out[0]["id"] if out else None,
-            # 主窗选中的形象（ui.json ✗）—— 角色窗口优先用它 ✗
+            # 主窗选的（ui.json ✗）—— 角色窗口优先用它们 ✗
+            "active_character": _load_ui().get("character"),
             "active_outfit": _load_ui().get("outfit"),
             "show_avatar": bool(_load_ui().get("show_avatar", True)),
         }

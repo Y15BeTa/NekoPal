@@ -22,9 +22,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await runtime.warmup()
+        # 角色窗口（桌宠）由**后端**负责生命周期 ✗ —— 主窗的「人物形象」开关说了算 ✗
+        from nekopal import pet_manager
+
+        pet_manager.ensure(pet_manager.show_avatar_wanted())
         try:
             yield
         finally:
+            pet_manager.stop()
             await runtime.aclose()
 
     app = FastAPI(title="NekoPal", version=__version__, lifespan=lifespan)
