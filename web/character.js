@@ -232,13 +232,53 @@ async function probeCore(modelUrl) {
     log('moc3 读到 ' + buf.byteLength + ' 字节 · 自身版本 v' +
         core.Version.csmGetMocVersion(buf, buf.byteLength));
 
-    const model = core.Model.fromMoc(core.Moc.fromArrayBuffer(buf));
+    const moc = core.Moc.fromArrayBuffer(buf);
+    const model = core.Model.fromMoc(moc);
     const d = model.drawables;
-    log('drawables 字段: ' + Object.keys(d).join(', '));
+
+    // ── 🛑 版本闸门 ──────────────────────────────────────────────────
+    // `pixi-live2d-display@0.4.0` 是按 **Cubism 4** 的 Core API 写的，
+    // 而你下的是 **Cubism 5** 的 Core —— 我们逐项比对过，**不是补一个名字的事**：
+    //
+    //   moc.canvasWidth        → Core 5 挪到了 model.canvasinfo   ✗
+    //   drawables.vertexPositions → Core 5 返回的不是扁平 Float32Array ✗
+    //   drawables.renderOrders → Core 5 叫 drawOrders              ✗
+    //
+    // 硬跑的结果不是"没形象"，而是**一屏碎片**（比 🐱 还难看 ✗）。
+    // 所以这里主动认出"不兼容" → 保持 🐱 占位，并**大声说明原因**。
+    const hasCanvas = moc.canvasWidth !== undefined || model.canvasWidth !== undefined;
+    if (!hasCanvas) {
+      log(
+        '⚠️ Core 版本不兼容 → 保持 🐱 占位。' +
+          'Core 5 把画布信息放到了 model.canvasinfo，而 pixi-live2d-display@0.4.0 ' +
+          '读的是 moc.canvasWidth（还有顶点数组与 renderOrders 也对不上）。' +
+          '要真正接上，需要一个配 Cubism 5 的渲染器。',
+      );
+      return false;
+    }
     log('renderOrders: ' +
         (d.renderOrders ? d.renderOrders.length + ' 个' : '❌ undefined'));
+
+    // ── 把 Core 5 的对象"长相"摊开：一次看全 API 差异 ────────────────
+    log('moc 字段: ' + Object.keys(moc).join(','));
+    log('moc.canvasWidth=' + moc.canvasWidth +
+        ' · getCanvasWidth=' +
+        (typeof moc.getCanvasWidth === 'function' ? moc.getCanvasWidth() : 'n/a') +
+        ' · pixelsPerUnit=' + moc.pixelsPerUnit);
+    log('model 字段: ' + Object.keys(model).join(','));
+    log('drawables.resetDynamicFlags 是 ' + typeof d.resetDynamicFlags);
+
+    model.update();
+    const vp2 = model.drawables.vertexPositions;
+    log('update 后 vertexPositions: ' + Object.prototype.toString.call(vp2) +
+        ' · length=' + vp2.length +
+        ' · 前 8 个=' + Array.from(vp2).slice(0, 8).map((n) => Math.round(n)).join(','));
+    log('drawable 顶点总数（vertexCounts 求和）=' +
+        Array.from(d.vertexCounts).reduce((a, b) => a + b, 0));
+    return true;
   } catch (err) {
     log('Core 自检失败 ✗ ' + (err && err.message ? err.message : err));
+    return false;
   }
 }
 
@@ -265,7 +305,7 @@ async function mountLive2D() {
   const url = active.url;
   log('开始加载模型：' + url);
   bridgeCubismVersion();
-  await probeCore(url);
+  if (!(await probeCore(url))) return; // 版本不兼容 → 停在 🐱 占位
 
   try {
     // ⚠️ 尺寸**显式给**，不要用 resizeTo：canvas 现在还是 display:none，
