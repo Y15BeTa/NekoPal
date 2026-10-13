@@ -13,7 +13,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 1
 
-LOG_DIR="/tmp/nekopal"
+LOG_DIR="$HOME/Library/Logs/NekoPal"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/launch.log"
 

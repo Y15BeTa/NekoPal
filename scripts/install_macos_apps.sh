@@ -89,18 +89,26 @@ on run
 	-- 与 scripts/launch.sh 等价的**内联**命令：
 	--   · 双击 App 时环境极简，所以自己把 ~/.zshrc 里的 SDKROOT / NEKOPAL_* 捞出来
 	--   · 然后交给 CLI 一键启动（变声服务 → 后端 → 原生窗口）
-	set shellCmd to "cd " & quoted form of root & " && eval \"$(grep -E '^export (SDKROOT|NEKOPAL_)' \"$HOME/.zshrc\" 2>/dev/null)\" && exec " & quoted form of (root & "/.venv/bin/nekopal") & " up"
+	--
+	-- ⚠️ 日志与重定向的写法（踩过，别改回去）：
+	--   ① 日志放 ~/Library/Logs，**不要用 /tmp** —— /tmp 会被系统定期清空（重启必清）
+	--   ② 重定向**不能挂在外层 sh 上**：`do shell script "CMD >> FILE"` 会在跑 CMD 之前
+	--      就把 FILE 打开 → 目录一没，连命令都跑不起来：
+	--         sh: /tmp/nekopal/launch.log: No such file or directory
+	--   ③ 采用「mkdir 在最外 + **整组**加重定向」：这样目录一定先建好，
+	--      而且**命令链中途失败也会被记进日志**（否则失败时连日志都没有，只能靠猜）
+	set shellCmd to "mkdir -p \"$HOME/Library/Logs/NekoPal\"; { cd " & quoted form of root & " && eval \"$(grep -E '^export (SDKROOT|NEKOPAL_)' \"$HOME/.zshrc\" 2>/dev/null)\" && exec " & quoted form of (root & "/.venv/bin/nekopal") & " up; } >> \"$HOME/Library/Logs/NekoPal/launch.log\" 2>&1"
 
 	-- 前台运行：窗口开着时 App 显示为「运行中」（Dock 图标 / ⌘Tab 都能找到它），
 	-- 关掉窗口它才返回 —— 收尾（后端 + 变声服务）由 nekopal up 自己完成。
 	try
 		with timeout of 86400 seconds
-			do shell script "/bin/bash -c " & quoted form of shellCmd & " >> /tmp/nekopal/launch.log 2>&1"
+			do shell script "/bin/bash -c " & quoted form of shellCmd
 		end timeout
 	on error errMsg
 		set tail to ""
 		try
-			set tail to do shell script "tail -12 /tmp/nekopal/launch.log 2>/dev/null || true"
+			set tail to do shell script "tail -12 \"$HOME/Library/Logs/NekoPal/launch.log\" 2>/dev/null || true"
 		end try
 		display dialog "启动失败：" & errMsg & return & return & tail ¬
 			buttons {"好"} default button 1 with icon caution

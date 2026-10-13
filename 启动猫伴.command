@@ -6,9 +6,10 @@
 # 桌面上就会出现双击即用的「启动猫伴.app」（不弹终端、有图标）。
 
 cd "$(dirname "$0")" || exit 1
-mkdir -p /tmp/nekopal
+LOG="$HOME/Library/Logs/NekoPal/launch.log"
+mkdir -p "$(dirname "$LOG")"
 
-nohup ./scripts/launch.sh > /tmp/nekopal/launch.log 2>&1 &
+nohup ./scripts/launch.sh > "$LOG" 2>&1 &
 disown
 
 echo "NekoPal 正在启动…（变声服务首次加载模型可能要十几秒）"
@@ -19,7 +20,7 @@ done
 sleep 1
 
 echo "── 启动日志 ──"
-tail -12 /tmp/nekopal/launch.log 2>/dev/null || true
+tail -12 "$LOG" 2>/dev/null || true
 echo "─────────────"
 echo "窗口应该已经出现了。这个终端窗口可以直接关掉。"
 sleep 2
