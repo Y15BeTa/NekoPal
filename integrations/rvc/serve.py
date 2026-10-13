@@ -84,6 +84,11 @@ def do_convert(payload: dict) -> dict:
     pitch = int(round(float(payload.get("pitch") or 0)))
     pitch_algo = str(payload.get("pitch_algo") or "pm")
     only_cpu = bool(payload.get("only_cpu", True))
+    # 气声相关三件套（设计文档 6.9 / 音色调节）：不传就用 RVC 的默认值。
+    # 这三个正是「声音有点虚 / 想要气音」主要能调的地方。
+    breath = float(payload.get("breath_protection") or 0.33)
+    envelope = float(payload.get("envelope_ratio") or 0.25)
+    respiration = int(payload.get("respiration_filter") or 3)
     source = Path(str(payload.get("input") or ""))
     target = Path(str(payload.get("output") or ""))
 
@@ -103,6 +108,9 @@ def do_convert(payload: dict) -> dict:
             file_index=index,
             pitch_algo=pitch_algo,
             pitch_lvl=pitch,
+            consonant_breath_protection=breath,
+            envelope_ratio=envelope,
+            respiration_median_filtering=respiration,
         )
         started = time.time()
         result, out_rate = loader.generate_from_cache(

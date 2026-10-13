@@ -54,6 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--index-influence", type=float, default=0.66, help="index 检索影响度 0~1"
     )
+    # ---- 气声三件套：想让声音「更虚 / 更有气音」主要靠这三个 ----
+    parser.add_argument(
+        "--breath-protection", type=float, default=0.33,
+        help="清辅音/气声保护强度 0~1（默认 0.33；调大更保护气声段）",
+    )
+    parser.add_argument(
+        "--envelope-ratio", type=float, default=0.25,
+        help="音量包络混合比 0~1（默认 0.25；调大更保留**源**的气声起伏）",
+    )
+    parser.add_argument(
+        "--respiration-filter", type=int, default=3,
+        help="呼吸/气声中值滤波窗口（默认 3；调小保留更多气声细节）",
+    )
     parser.add_argument("--tag", default="nekopal", help="内部缓存标签，一般不用改")
     parser.add_argument("--gpu", action="store_true", help="有 NVIDIA 显卡时用（Mac 上别加）")
     parser.add_argument("--quiet", action="store_true", help="不打印进度")
@@ -87,6 +100,9 @@ def via_endpoint(endpoint: str, args, source: Path, target: Path, model: Path):
             "index": args.index or "",
             "pitch": args.pitch,
             "pitch_algo": args.pitch_algo,
+            "breath_protection": args.breath_protection,
+            "envelope_ratio": args.envelope_ratio,
+            "respiration_filter": args.respiration_filter,
         }
     ).encode("utf-8")
 
@@ -186,6 +202,9 @@ def main(argv=None) -> int:
             pitch_algo=args.pitch_algo,
             pitch_lvl=int(round(args.pitch)),
             index_influence=args.index_influence,
+            consonant_breath_protection=args.breath_protection,
+            envelope_ratio=args.envelope_ratio,
+            respiration_median_filtering=args.respiration_filter,
         )
         # 传数组而不是路径：绕开 ffmpeg（README 里 audio_data 支持 (array, sr) 元组）
         result, out_rate = converter.generate_from_cache(
