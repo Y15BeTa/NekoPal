@@ -651,6 +651,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         "convert": _cmd_convert,
         "autostart": _cmd_autostart,
     }
+    # 🏠 任何子命令之前，先确保用户工作区在（只创建、绝不覆盖 ✗）
+    if args.command not in ("down",):
+        try:
+            from nekopal.bootstrap import ensure_user_workspace
+
+            ensure_user_workspace()
+        except Exception:  # noqa: BLE001
+            pass
+
     handler = handlers.get(args.command)
     if handler is None:
         parser.print_help()

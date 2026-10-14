@@ -154,3 +154,68 @@ persona:                        # 可选（Phase 4：角色化改写）
 > 📄 写作要点：最能影响生成风格的是文档里的「**说话方式**」和「**口头禅**」两节 ✗。
 > ⚠️ 但它们**也会让模型过度模仿** ✗ —— 比如写「经常只回一个「……」」✗，
 > 它就可能**每句都叹气** ✗；用**具体约束**兜住 ✗（"最多每 4 句用 1 次"✗）。
+
+---
+
+## ➕ 加一个新角色（完整步骤）
+
+> 一句话：**「角色的东西」放 `characters/` 和 `voices/` 里各一个文件夹；
+> 「你的东西」永远只有一份。**
+
+设计上刻意分了两类 ✗：
+
+| | 放哪 | 有几个 |
+| --- | --- | --- |
+| 👤 **你的**：`api_key`、私人信息 | `~/.config/nekopal/chat.yaml` · `profile.md` | **永远一个** ✗ |
+| 🎭 **角色的**：音色、模型、人设、台词池 | `voices/<id>/` · `characters/<id>/` · `lines.yaml` 的一节 | 每个角色一份 ✗ |
+
+### 步骤
+
+**① 音色** → `~/.config/nekopal/voices/<id>/`
+
+```
+voices/<id>/
+├── voice.yaml      # 抄一份现成的改：base_voice / rate / model / index / command
+├── <model>.pth     # RVC（或其他）模型
+└── <model>.index
+```
+
+`voice.yaml` 的 `id` 必须和**文件夹名**一致 ✗，之后音色 id 就是 `rvc:<id>` ✅
+
+**② 角色** → `~/.config/nekopal/characters/<id>/`
+
+```
+characters/<id>/
+├── character.yaml  # 形象定义：用哪个模型 / 口型参数 / 默认音色
+├── persona.md      # 性格（给大模型看的）—— 抄 characters/example-rana/persona.md
+└── model/…         # Live2D 模型（.model3.json / .moc3 / Textures / Motions / …）
+```
+
+`character.yaml` 里 **`voice: <音色 id>`** 把①②绑起来 ✗
+
+**③ 台词池** → 不用手动建 ✗
+
+在界面上选到新角色，点「**➕ 再生成一批**」✗，
+它会自动在 `~/.config/nekopal/lines.yaml` 里**加一节** ✗：
+
+```yaml
+characters:
+  rana: { … }
+  <id>:            # ← 自动出现
+    lines: […]
+```
+
+**④ 重启** → 关掉 App 再打开（角色/音色列表是启动时扫描的 ✗）
+
+### 一共改了哪些地方
+
+| # | 改什么 | 必须吗 |
+| --- | --- | --- |
+| 1 | 新建 `voices/<id>/`（含 `voice.yaml` + 模型） | ✅ 必须 |
+| 2 | 新建 `characters/<id>/`（含 `character.yaml` + `persona.md` + 模型） | ✅ 必须 |
+| 3 | `lines.yaml` 加一节 | ❌ 界面自动 |
+| 4 | `chat.yaml` / `profile.md` | ❌ **不用动**（它们不属于角色 ✗） |
+| 5 | 重启 App | ✅ 必须 |
+
+> ⚠️ **只支持自己用自己的素材** ✗ —— 仓库里**不含任何**音色 / Live2D 模型 ✗，
+> 项目只提供**规范和接口** ✗（见上面「合规提醒」）。

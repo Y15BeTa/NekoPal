@@ -70,6 +70,28 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     app.include_router(build_router(runtime), prefix="/api")
 
+    # 🏠 首次运行：把用户工作区（~/.config/nekopal/）准备好 —— 建目录 + 生成模板。
+    #    ⚠️ 只创建、绝不覆盖 ✗。以前这一步**完全没有** ✗：换台电脑跑起来，
+    #    配置目录连文件夹都不会建，用户不知道东西该放哪儿（2026-10-14 实测）。
+    try:
+        from nekopal.bootstrap import ensure_user_workspace
+
+        boot = ensure_user_workspace()
+        if boot.get("created"):
+            print(
+                "首次运行：已创建 {}".format("、".join(boot["created"])),
+                flush=True,
+            )
+        if boot.get("missing"):
+            print(
+                "提示：这些还需要你自己放（有版权，程序不代为分发）：{}".format(
+                    "、".join(boot["missing"])
+                ),
+                flush=True,
+            )
+    except Exception as exc:  # noqa: BLE001 - 准备失败不该影响启动
+        print("首次运行准备失败（不影响运行）：{}".format(exc), flush=True)
+
     web_dir = runtime.settings.web_dir
     if web_dir is not None and Path(web_dir).is_dir():
         app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="web")
