@@ -69,3 +69,22 @@ def test_ids_referenced_by_js_exist_in_html():
         if gone:
             missing[f.name] = gone
     assert not missing, "js 要的 id 在 html 里没有：{}".format(missing)
+
+
+def test_clean_rules_in_ui_match_backend():
+    """界面的「读前清洗」勾选项，必须和后端真正有的规则**一一对应**。
+
+    ⚠️ 为什么值得钉：两边是**各写各的** —— 后端加一条新规则、
+    界面忘了加，用户就会"少一个开关"，而且**看起来一切正常** ✗。
+    """
+
+    from nekopal.core.textproc.rules import RULES
+
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    block = js[js.index("const CLEAN_RULES = ["):]
+    block = block[: block.index("];")]
+    ui = set(re.findall(r"\['([a-z_]+)',", block))
+
+    assert ui == set(RULES), "界面有 {}，后端有 {}（差：{}）".format(
+        sorted(ui), sorted(RULES), sorted(ui ^ set(RULES))
+    )

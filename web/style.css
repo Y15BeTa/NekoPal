@@ -598,3 +598,38 @@ kbd {
   color: var(--faint);
 }
 .line-del:hover { color: #ff8b8b; border-color: #7a3a3a; background: #2a1b1b; }
+
+/* ── 读前清洗规则的勾选区（P20）────────────────────────────────────
+ * 后端早就有这 6 条规则，只是从来没上过界面。
+ */
+.clean-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 2px var(--sp-4);
+  margin-top: var(--sp-1);
+}
+.clean-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.clean-item input {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  accent-color: var(--accent-strong);
+  cursor: pointer;
+}
+.clean-item .ci-text { display: flex; flex-direction: column; gap: 1px; line-height: 1.5; }
+.clean-item .ci-name { color: var(--text); }
+.clean-item .ci-desc { font-size: 11px; color: var(--faint); }
+.clean-item code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  background: #1a1e25;
+  padding: 0 4px;
+  border-radius: 3px;
+}

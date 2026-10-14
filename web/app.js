@@ -1373,6 +1373,61 @@ async function saveSetting(patch) {
   }
 }
 
+
+// ── 🧹 读前清洗规则（P20）──────────────────────────────────────────────
+// 后端 `Settings.clean` 一直有这 6 条（见 core/textproc/rules.py 的 RULES），
+// 只是从来没上过界面 —— 只能改配置文件。这里给它一个勾选组。
+const CLEAN_RULES = [
+  ['normalize', '归一化空白', '全角/半角、多余空格换行收拾干净'],
+  ['skip_code', '跳过代码块', '被 ``` 包起来的一整段不念'],
+  ['skip_tables', '跳过表格', 'Markdown 表格不念（念出来是一串竖线）'],
+  ['strip_markdown', '去掉排版标记', '**粗体**、# 标题、> 引用 这些只念文字'],
+  ['speak_symbols', '符号读成人话', '→ 读「箭头」、& 读「和」……不然会被念成怪符号'],
+  ['strip_emoji', '去掉 emoji', 'emoji 和颜文字不念'],
+];
+
+function buildCleanGrid() {
+  const box = document.getElementById('cleanGrid');
+  if (!box || box.dataset.built) return;
+  box.dataset.built = '1';
+  for (const [id, name, desc] of CLEAN_RULES) {
+    const label = document.createElement('label');
+    label.className = 'clean-item';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'clean-' + id;
+    cb.dataset.rule = id;
+    const text = document.createElement('span');
+    text.className = 'ci-text';
+    text.innerHTML =
+      '<span class="ci-name">' + escapeHtml(name) + '</span>' +
+      '<span class="ci-desc">' + escapeHtml(desc) + '</span>';
+    label.append(cb, text);
+    cb.addEventListener('change', async () => {
+      // ⚠️ 整份提交（后端就是整份替换 ✗）—— 顺序按 CLEAN_RULES，稳定 ✅
+      const on = CLEAN_RULES.map(([rid]) => rid)
+        .filter((rid) => document.getElementById('clean-' + rid)?.checked);
+      const ok = await saveSetting({ clean: on });
+      if (ok) {
+        setStatus('清洗规则已保存（' + on.length + ' 条生效）');
+        // 改了清洗规则 → 文本可能被切得不一样，提示一下
+        if (els.reader) { /* 已在读的内容不重切，下次朗读生效 */ }
+      }
+    });
+    box.append(label);
+  }
+}
+
+function loadCleanGrid(clean) {
+  const on = new Set(Array.isArray(clean) ? clean : []);
+  for (const [id] of CLEAN_RULES) {
+    const cb = document.getElementById('clean-' + id);
+    if (cb) cb.checked = on.has(id);
+  }
+}
+
+buildCleanGrid();
+
 async function loadSettings(force = false) {
   const box = document.getElementById('setAutoRead');
   if (!box) return;
@@ -1391,8 +1446,11 @@ async function loadSettings(force = false) {
   document.getElementById('setScroll').value = s.auto_scroll || 'center';
   document.getElementById('setPrefetch').value = s.prefetch ?? 3;
   document.getElementById('setCacheMb').value = s.cache_max_mb ?? 500;
+  loadCleanGrid(s.clean);
   const pitchEl = document.getElementById('setPitch');
   if (pitchEl) pitchEl.value = s.pitch ?? 0;
+
+
   const dir = document.getElementById('expDir');
   if (dir && s.export_dir) dir.textContent = s.export_dir;
 

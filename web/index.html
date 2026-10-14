@@ -136,7 +136,15 @@
           <span class="row-hint">播第 N 句时先把后面几句合成好，掩盖延迟</span>
         </label>
 
-        <p class="note">⏳ 读前清洗规则（跳过代码块 / 表格、<code>→</code> 读「箭头」…）会放在这一组，还没做。</p>
+        <hr class="card-sep">
+
+        <div class="row">
+          <span class="row-label">读前清洗</span>
+          <span class="row-hint">
+            朗读之前先"洗一遍"原文。关掉某一条就是**照着原文念**（代码块也会被念出来）。
+          </span>
+        </div>
+        <div class="clean-grid" id="cleanGrid"><!-- 由 JS 填 --></div>
       </section>
 
       <!-- ══ 🔊 声音 ══ -->
