@@ -92,7 +92,16 @@ async function speakRandom() {
     el.currentTime = 0;
     if (lipCtx && lipCtx.state === 'suspended') lipCtx.resume().catch(() => {});
     await el.play();
-    log('点击：说了「' + data.text + '」（' + data.source + ' · ' + data.voice + '）✅');
+    log(
+      '点击：说了「' + data.text + '」（' + data.source + ' · ' + data.voice + '）✅',
+    );
+    if (data.fell_back) {
+      // ⚠️ 这条一定要喊出来 ✗ —— 不然"要楽奈悄悄变成系统朗读"你只能靠耳朵发现 ✗
+      log(
+        '⚠️ 音色退回了兜底！想要 ' + data.wanted_voice + '，实际用的是 ' + data.voice +
+          '（多半是 edge-tts 连不上 / 版本过旧，见 /api/voice-check）',
+      );
+    }
 
     // 🔎 口型体检：这次说话期间，本地电平的**峰值**是多少。
     //    没有它的话，"看不到张嘴"根本分不清是「没电平」还是「有电平但嘴没动」——

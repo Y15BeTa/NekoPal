@@ -1003,6 +1003,51 @@ def build_router(runtime: Runtime) -> APIRouter:
         runtime.record("lines-cleared")
         return data
 
+    @router.post("/voice-check")
+    async def voice_check() -> dict:
+        """试合成一句，看**有没有偷偷退回兜底音色**。
+
+        为什么需要它 ✗：`synthesize_sentence` 在失败时会安静地改用 `fallback_voice` ✗ ——
+        本意是"别让你听不到声音"，但结果是**你完全不知道音色坏掉了** ✗。
+        2026-10-14 真实踩到：`edge-tts` 版本过旧、被微软 403 ✗，
+        **要楽奈静默变成系统朗读**，界面上却还显示着"要楽奈" ——
+        最后是用户**靠耳朵**发现的 ✗。
+
+        所以给界面一个"体检"入口：一句话就能问出"**现在到底是谁在说话**" ✗。
+        """
+
+        settings = runtime.settings
+        wanted = settings.default_voice
+        fb = settings.fallback_voice
+        try:
+            sentences = prepare_sentences("在的。", {}, settings.clean) or ["在的。"]
+            segment, used_fallback = await synthesize_sentence(
+                sentences[0],
+                wanted,
+                _synth_options({}),
+                runtime.tts,
+                runtime.cache,
+                fb,
+            )
+        except Exception as exc:  # noqa: BLE001 - 体检失败本身也是一种结果 ✗
+            runtime.record("voice-check-failed", voice=wanted, error=str(exc)[:160])
+            return {
+                "ok": False,
+                "wanted": wanted,
+                "fell_back": False,
+                "error": str(exc)[:200],
+            }
+
+        used = fb if used_fallback else wanted
+        runtime.record("voice-check", wanted=wanted, used=used, fell_back=bool(used_fallback))
+        return {
+            "ok": True,
+            "wanted": wanted,
+            "used": used,
+            "fell_back": bool(used_fallback),
+            "url": "/api/audio/{}".format(segment.audio_id),
+        }
+
     @router.post("/avatar/say")
     async def avatar_say(request: Request) -> dict:
         """合成**一句话**给角色窗口播放 ✗。
@@ -1030,7 +1075,10 @@ def build_router(runtime: Runtime) -> APIRouter:
         # 角色说话：**用户选过的音色 > 角色包声明的 > 后端默认** ✗
         voice = _avatar_voice(character)
         try:
-            segment, cached = await synthesize_sentence(
+            # ⚠️ 第二个返回值是 **`used_fallback`**，不是 `cached` ——
+            #    以前这里写的是 `cached`，于是活动记录里的 `cached` 一直是错的，
+            #    而"**已经退回兜底音色**"这件重要的事**被丢掉了**（2026-10-14 修）。
+            segment, used_fallback = await synthesize_sentence(
                 sentences[0],
                 voice,
                 options,
@@ -1044,11 +1092,20 @@ def build_router(runtime: Runtime) -> APIRouter:
                 502, {"code": "SAY_FAILED", "message": "合成失败：{}".format(exc)}
             ) from exc
 
-        runtime.record("avatar-say", text=sentences[0], cached=bool(cached))
+        # ⚠️ 返回**实际用的**那个音色 ✗ —— 以前不管有没有退兜底，都回 requested 的那个，
+        #    于是"要楽奈静默变成系统朗读"这件事**在界面上一点痕迹都没有** ✗
+        #    （真实踩到：edge-tts 过旧被微软 403，用户只能靠耳朵发现 ✗）。
+        used = runtime.settings.fallback_voice if used_fallback else voice
+        if used_fallback:
+            runtime.record(
+                "avatar-say-fell-back", wanted=voice, used=used, text=sentences[0]
+            )
+        runtime.record("avatar-say", text=sentences[0], voice=used)
         return {
             "text": sentences[0],
-            "voice": voice,
-            "cached": bool(cached),
+            "voice": used,
+            "wanted_voice": voice,
+            "fell_back": bool(used_fallback),
             # ⚠️ 字段是 `audio_id` 不是 `id` ✗（踩过 ✗）
             "url": "/api/audio/{}".format(segment.audio_id),
         }

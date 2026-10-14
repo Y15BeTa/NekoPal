@@ -1201,3 +1201,31 @@ async function checkChatHealth() {
 
 checkChatHealth();
 
+// ── 音色体检 ───────────────────────────────────────────────────────────
+// ⚠️ 为什么要有它：合成失败时后端会**安静地**改用兜底音色（fallback_voice）——
+//    本意是"别让你听不到声音"，但 2026-10-14 真的踩到：
+//    `edge-tts` 版本过旧被微软 403 → **要楽奈静默变成系统朗读**，
+//    界面上还显示着"要楽奈"，最后是靠耳朵发现的。
+//    所以启动时问一句"现在到底是谁在说话"。
+async function checkVoiceHealth() {
+  try {
+    const res = await fetch('/api/voice-check', { method: 'POST' });
+    const d = await res.json();
+    if (d.fell_back) {
+      setStatus('⚠️ 音色回退了：想要「' + d.wanted + '」却只能用「' + d.used + '」');
+      report('voice-fell-back', { wanted: d.wanted, used: d.used });
+      if (els.packWarn) {
+        els.packWarn.hidden = false;
+        els.packWarn.textContent =
+          '⚠️ 角色音色回退了：想要「' + d.wanted + '」，实际用的是「' + d.used +
+          '」。多半是 edge-tts 连不上或版本过旧 —— 升级它就能好（uv pip install -U edge-tts）。';
+      }
+    } else if (d.ok === false) {
+      setStatus('⚠️ 音色体检失败：' + (d.error || '未知原因'));
+      report('voice-check-failed', { error: d.error });
+    }
+  } catch (err) { /* 体检失败不打扰 */ }
+}
+
+checkVoiceHealth();
+

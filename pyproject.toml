@@ -38,7 +38,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # 音色丰富、需联网；缺失时自动降级到 macOS say
-edge = ["edge-tts>=6.1"]
+# ⚠️ 别松回 6.x ✗ —— 微软会轮换 token / 改协议，旧版会 403，
+#    而失败是**静默退兜底**的（2026-10-14 真实踩到：要楽奈变成系统朗读 ✗）。
+edge = ["edge-tts>=7.3"]
 # 原生窗口外壳（nekopal app）
 desktop = ["pywebview>=5"]
 dev = ["pytest>=8", "ruff>=0.6"]
