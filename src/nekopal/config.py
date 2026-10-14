@@ -83,6 +83,17 @@ class Settings:
 
     clean: List[str] = field(default_factory=lambda: list(DEFAULT_CLEAN))
     rate: float = 1.0
+    #: ── 挂机时"自发说一句"（R16）───────────────────────────
+    #: 开关（用户明确要过这个功能，所以默认开）
+    idle_enabled: bool = True
+    #: 间隔下限 / 上限（分钟）—— 实际取两者之间的随机值
+    idle_min_minutes: int = 8
+    idle_max_minutes: int = 20
+    #: 允许出声的时段（24 小时制，`起-止`）。**半夜别出声** —— 这是硬要求 ✗
+    idle_hours: str = "9-23"
+    #: 要不要把自发说的那句**也存进点击台词池**
+    idle_to_pool: bool = False
+
     #: 变调（半音 ✗）。**RVC 后端用** —— 走 `options.pitch` 进缓存键 ✗，
     #: 所以改了它旧缓存会自然失效 ✅
     pitch: float = 0.0
@@ -123,6 +134,11 @@ class Settings:
             "clean": list(self.clean),
             "rate": self.rate,
             "pitch": self.pitch,
+            "idle_enabled": self.idle_enabled,
+            "idle_min_minutes": self.idle_min_minutes,
+            "idle_max_minutes": self.idle_max_minutes,
+            "idle_hours": self.idle_hours,
+            "idle_to_pool": self.idle_to_pool,
             "auto_scroll": self.auto_scroll,
             "prefetch": self.prefetch,
             "follow": self.follow,
@@ -147,6 +163,8 @@ def load_settings() -> Settings:
     s.cache_max_mb = _env_int("NEKOPAL_CACHE_MAX_MB", s.cache_max_mb)
     s.rate = _env_float("NEKOPAL_RATE", s.rate)
     s.pitch = _env_float("NEKOPAL_PITCH", s.pitch)
+    s.idle_enabled = _env_bool("NEKOPAL_IDLE", s.idle_enabled)
+    s.idle_hours = _env("NEKOPAL_IDLE_HOURS", s.idle_hours)
     s.prefetch = max(1, _env_int("NEKOPAL_PREFETCH", s.prefetch))
     s.dedupe_window = _env_float("NEKOPAL_DEDUPE_WINDOW", s.dedupe_window)
     s.follow = _env("NEKOPAL_FOLLOW", "1" if s.follow else "0").strip().lower() not in (

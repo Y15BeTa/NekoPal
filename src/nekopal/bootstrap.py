@@ -128,10 +128,13 @@ def ensure_user_workspace() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 - 建不出来也不该让程序起不来
         return {"dir": str(root), "created": [], "missing": [], "error": "无法创建配置目录"}
 
+    from nekopal.chat import IDLE_PROMPT_TEMPLATE
+
     templates = {
         "chat.yaml": CHAT_TEMPLATE,
         "profile.md": PROFILE_TEMPLATE,
         "README.txt": README_TEXT,
+        "idle_prompt.md": IDLE_PROMPT_TEMPLATE,
     }
     for name, body in templates.items():
         path = root / name

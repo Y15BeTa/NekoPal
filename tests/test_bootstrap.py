@@ -22,9 +22,15 @@ def fresh(tmp_path, monkeypatch):
 def test_creates_dir_and_templates(fresh):
     out = bootstrap.ensure_user_workspace()
     assert fresh.is_dir()
-    for name in ("chat.yaml", "profile.md", "README.txt", "ui.json"):
+    for name in ("chat.yaml", "profile.md", "README.txt", "idle_prompt.md", "ui.json"):
         assert (fresh / name).is_file(), name
-    assert sorted(out["created"]) == ["README.txt", "chat.yaml", "profile.md", "ui.json"]
+    assert sorted(out["created"]) == [
+        "README.txt",
+        "chat.yaml",
+        "idle_prompt.md",
+        "profile.md",
+        "ui.json",
+    ]
 
 
 def test_never_overwrites(fresh):

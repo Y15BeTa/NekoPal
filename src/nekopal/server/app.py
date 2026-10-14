@@ -129,6 +129,11 @@ def _restore_ui_voice(runtime: "Runtime") -> None:
             ("cache_max_mb", int),
             ("line_source", str),
             ("pitch", float),
+            ("idle_enabled", bool),
+            ("idle_min_minutes", int),
+            ("idle_max_minutes", int),
+            ("idle_hours", str),
+            ("idle_to_pool", bool),
             # 注意：`paw_cursor` / `gaze_follow` **不在这里** ✗ ——
             # 它们只存在 `ui.json` 里、不是 `Settings` 字段 ✗，
             # 而且 `/api/ui` 每次都现读文件 ✅（角色窗 3 秒轮询一次就拿到了 ✗）。

@@ -34,6 +34,10 @@ from typing import Any, Dict, List, Optional
 
 __all__ = [
     "DEFAULT_BATCH",
+    "IDLE_PROMPT_TEMPLATE",
+    "generate_idle",
+    "idle_prompt_file",
+    "load_idle_prompt",
     "chat_file",
     "clear_lines",
     "default_config",
@@ -420,6 +424,117 @@ def generate_line(character_id: Optional[str], scene: str = "") -> Dict[str, Any
         scene or "（对方点了一下你，随口说一句）",
         int(cfg.get("max_tokens") or 60),
     )
+    line = _strip_line(raw)
+    if not line:
+        raise RuntimeError("LLM 没说出有效内容")
+    return {"text": line, "model": str(cfg["model"])}
+
+
+# -- 挂机时"自发说一句"（R16）--------------------------------------------
+# 用户的原话：「挂机偶尔突然实时生成语音：根据角色人设 + 私人信息 +
+# **近期读的 opencode 文字** + 其他内容（近期新闻 / 早安午安晚安 /
+# 快睡觉多喝水 / 快写作业 / 别玩手机等）……」
+#
+# 他自己就点出了关键：**不作为点击反馈**（太慢、体验不好），
+# 而是**偶尔自发**触发 ✅。所以这条走的是"慢一点没关系"的路 ——
+# 可以打一次大模型、可以等两秒，只要**别打断用户**，也**别在半夜出声**。
+
+_IDLE_TEMPLATE = """你正在扮演一个角色。下面是你的人设：
+
+{persona}
+
+## 关于和你说话的人
+{profile}
+
+## 现在是
+{moment}
+
+## 她最近在读 / 在看的文字（**只当话题线索用，不要复述内容**）
+{recent}
+
+## 额外要求（她自己写的，优先满足）
+{extra}
+
+## 任务
+她**没有在跟你说话** —— 你只是**自己突然想到一句话**，说给她听。
+（所以不要"在吗""怎么了"这种回应式的话）
+
+## 硬要求
+- 只输出**一句话**，**3～14 个字**，像自言自语
+- 不要引号、书名号、括号、emoji、颜文字
+- 不要提到"设定""角色""资料""最近"
+- 不要叹气、不要写「唉」「唔」「呼」
+- 如果上面给了"她最近在读的文字"，**至多点一件**，点到为止
+"""
+
+#: `idle_prompt.md` 的模板（**仓库外** ✗，用户可以自己改 ✗）
+IDLE_PROMPT_TEMPLATE = """# 挂机时"自发说一句"的额外要求
+
+> 这份文档会被**塞进提示词**，只在**挂机自发生成**时用到
+> （点击反馈走的是 persona.md，不用这份）。
+>
+> 写什么都可以：想让她多提什么、少提什么、什么时段说什么。
+> 留空 = 不加额外要求（也能用）。
+
+## 例子（可以照抄改）
+
+- 早上可以说一句早安；晚上 11 点后提醒我去睡觉
+- 偶尔提醒我喝水、别一直玩手机、作业还没写
+- 多提一点我在上的课和找工作的进度
+- 别总提抹茶了，最近有点腻
+
+## 我的要求
+
+（在这里写）
+"""
+
+
+def idle_prompt_file() -> Path:
+    from nekopal.packs import config_dir
+
+    return config_dir() / "idle_prompt.md"
+
+
+def load_idle_prompt() -> str:
+    """读用户写的「挂机额外要求」✗（没有 → 空 ✗）。"""
+
+    try:
+        return idle_prompt_file().read_text(encoding="utf-8").strip()[:2000]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def generate_idle(
+    character_id: Optional[str],
+    recent: Optional[List[str]] = None,
+    moment: str = "",
+) -> Dict[str, Any]:
+    """为「挂机自发一句」生成台词 ✗。失败抛异常 ✗。"""
+
+    cfg = load_config()
+    if not is_enabled():
+        raise RuntimeError("没配 LLM（chat.yaml 里缺 base_url / api_key / model）")
+
+    extra = load_idle_prompt()
+    # 模板里那段"例子"只是给人看的 —— 送进提示词时去掉，别让模型照着念 ✗
+    if "## 我的要求" in extra:
+        extra = extra.split("## 我的要求", 1)[1].strip()
+
+    recent_text = "（这次没有）"
+    if recent:
+        # ⚠️ 只给**片段**、只给最近几条 ✗ —— 既省 token，也避免把整篇发出去 ✗
+        bits = ["· " + t.strip().replace("\n", " ")[:60] for t in recent[-3:] if t.strip()]
+        if bits:
+            recent_text = "\n".join(bits)
+
+    system = _IDLE_TEMPLATE.format(
+        persona=load_persona(character_id),
+        profile=load_profile() or "（没有额外信息）",
+        moment=moment or "（不知道，别提具体时间）",
+        recent=recent_text,
+        extra=extra or "（没有）",
+    )
+    raw = _post_chat(system, "说一句吧。", max(300, int(cfg.get("max_tokens") or 400)))
     line = _strip_line(raw)
     if not line:
         raise RuntimeError("LLM 没说出有效内容")
