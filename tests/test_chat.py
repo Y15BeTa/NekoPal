@@ -248,3 +248,28 @@ def test_batch_prompt_caps_the_ellipsis_and_bans_sighs():
     assert "最多 4 句" in prompt.replace("不要超过 4 句", "最多 4 句")
     assert "叹词" in prompt
     assert "{want}" in prompt  # 用户的一句话需求要真的进提示词
+
+
+# ── ⑦ 追加模式：生成时**不能**把旧台词冲掉 ─────────────────────────────
+
+
+def test_merge_lines_keeps_the_old_ones(cfg):
+    """用户要求：「每次新生成时，不要自动把之前的删掉」。"""
+
+    chat.save_lines("rana", ["旧的一。", "旧的二。"], "m", "w")
+    out = chat.merge_lines("rana", ["新的一。"], "m", "w2")
+    assert out["lines"] == ["旧的一。", "旧的二。", "新的一。"]
+    assert out["added"] == 1
+    assert out["count"] == 3
+
+
+def test_merge_lines_dedupes(cfg):
+    chat.save_lines("rana", ["一样。"], "m")
+    out = chat.merge_lines("rana", ["一样。", "新的。"], "m")
+    assert out["lines"] == ["一样。", "新的。"]
+    assert out["added"] == 1
+
+
+def test_merge_lines_works_on_empty_pool(cfg):
+    out = chat.merge_lines("rana", ["甲。"], "m")
+    assert out["lines"] == ["甲。"]

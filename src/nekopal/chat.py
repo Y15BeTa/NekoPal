@@ -44,6 +44,7 @@ __all__ = [
     "lines_status",
     "load_config",
     "load_lines",
+    "merge_lines",
     "load_persona",
     "load_profile",
     "pick_line",
@@ -587,6 +588,31 @@ def load_lines(character_id: Optional[str]) -> Dict[str, Any]:
     }
 
 
+def merge_lines(
+    character_id: Optional[str], new_lines: List[str], model: str = "", want: str = ""
+) -> Dict[str, Any]:
+    """**追加**一批台词（旧的保留 ✗，重复的去掉 ✗）。
+
+    用户要求：「每次新生成时，不要自动把之前的删掉」✗ ——
+    以前是**整份覆盖** ✗，生成一次就把你手改过的、删过的全冲掉了 ✗。
+    """
+
+    old_lines = load_lines(character_id)["lines"]
+    seen = set(old_lines)
+    merged = list(old_lines)
+    added = 0
+    for x in new_lines:
+        t = str(x).strip()[:MAX_LINE_CHARS]
+        if t and t not in seen:
+            seen.add(t)
+            merged.append(t)
+            added += 1
+    out = save_lines(character_id, merged, model, want)
+    out["added"] = added
+    out["replaced"] = 0
+    return out
+
+
 def save_lines(
     character_id: Optional[str],
     lines: List[str],
@@ -681,7 +707,10 @@ def _clean_batch(raw: str, want: int) -> List[str]:
 
 
 def generate_lines(
-    character_id: Optional[str], count: int = DEFAULT_BATCH, want: str = ""
+    character_id: Optional[str],
+    count: int = DEFAULT_BATCH,
+    want: str = "",
+    append: bool = False,
 ) -> Dict[str, Any]:
     """**一次生成一整批**台词并存档 ✗。失败抛异常 ✗。
 
@@ -718,7 +747,13 @@ def generate_lines(
     lines = _clean_batch(raw, n)
     if len(lines) < 3:
         raise RuntimeError("模型没给出足够多的有效台词（只拿到 {} 条 ✗）".format(len(lines)))
-    return save_lines(character_id, lines, str(cfg["model"]), want)
+    model = str(cfg["model"])
+    if append:
+        # 追加模式：旧的留着，新的去重后接在后面
+        out = merge_lines(character_id, lines, model, want)
+        out["generated"] = len(lines)
+        return out
+    return save_lines(character_id, lines, model, want)
 
 
 #: 「抽签袋」——保证一轮之内**不重复**✗（抽空了自动重填 ✅）。

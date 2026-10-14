@@ -58,6 +58,7 @@ def _load_ui() -> dict:
         # 🌟 角色窗的「感觉型」开关 ✗ —— 都在主窗「设置」里，不该让人去编辑 json ✗
         "paw_cursor": True,   # 🐾 鼠标移到角色上变成小猫爪
         "gaze_follow": True,  # 眼睛和头看向光标
+        "click_fx": True,     # ✨ 点击时的粒子特效
     }
     try:
         data = json.loads(_ui_file().read_text(encoding="utf-8"))
@@ -913,16 +914,26 @@ def build_router(runtime: Runtime) -> APIRouter:
         count = payload.get("count") or chat_mod.DEFAULT_BATCH
         # 用户写的一句话需求 ✗（"这次想要多一点跟找工作有关的" ✗）
         want = str(payload.get("want") or "").strip()[:500]
+        # ⚠️ 默认**追加**（旧台词保留 ✗）—— 用户明确要求"不要自动把之前的删掉"✗。
+        #    想整份重来就显式传 `replace: true` ✅
+        append = not bool(payload.get("replace"))
 
         try:
-            data = await asyncio.to_thread(chat_mod.generate_lines, cid, count, want)
+            data = await asyncio.to_thread(
+                chat_mod.generate_lines, cid, count, want, append
+            )
         except Exception as exc:  # noqa: BLE001 - 失败要让界面上看得见 ✗
             runtime.record("lines-generate-failed", error=str(exc)[:160])
             raise HTTPException(
                 502, {"code": "LINES_FAILED", "message": str(exc)[:200]}
             ) from None
 
-        runtime.record("lines-generated", count=data["count"], model=data["model"])
+        runtime.record(
+            "lines-generated",
+            count=data["count"],
+            added=data.get("added"),
+            model=data["model"],
+        )
         return data
 
     @router.post("/lines/open")

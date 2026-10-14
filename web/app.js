@@ -866,18 +866,34 @@ async function putLines(lines, rerender) {
   }
 }
 
-async function generateLines() {
-  const btn = document.getElementById('linesGen');
+/**
+ * 生成台词。
+ *
+ * ⚠️ `replace` 默认 **false** —— 也就是**追加** ✗。
+ * 用户要求过「每次新生成时，不要自动把之前的删掉」：
+ * 以前是整份覆盖，生成一次就把你手改过、删过的全冲掉了。
+ * 想整份重来就显式点「覆盖重来」（会先确认一次）。
+ */
+async function generateLines(replace = false) {
+  const btn = replace
+    ? document.getElementById('linesGenReplace')
+    : document.getElementById('linesGen');
   const st = document.getElementById('linesStatus');
   const count = parseInt(document.getElementById('linesCount').value, 10) || 30;
   const want = (document.getElementById('linesWant')?.value || '').trim();
+
+  if (replace) {
+    const n = linesData?.count || 0;
+    if (!window.confirm('覆盖重来？现有的 ' + n + ' 条会被清掉（包括你手改过的）。')) return;
+  }
   if (btn) btn.disabled = true;
-  if (st) st.textContent = '生成中…（一次写 ' + count + ' 句，别关窗口）';
+  if (st) st.textContent =
+    (replace ? '重新生成中…' : '追加生成中…') + '（一次写 ' + count + ' 句，别关窗口）';
   try {
     const res = await fetch('/api/lines', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count, want }),
+      body: JSON.stringify({ count, want, replace }),
     });
     const d = await res.json();
     if (!res.ok) {
@@ -886,7 +902,11 @@ async function generateLines() {
     }
     linesData = d;
     await loadLines();
-    if (st) st.textContent = '✅ 生成 ' + d.count + ' 条 —— 可以直接改 / 删';
+    if (st) {
+      st.textContent = replace
+        ? '✅ 整份重来：' + d.count + ' 条'
+        : '✅ 新增 ' + (d.added ?? '?') + ' 条，现在共 ' + d.count + ' 条（旧的都在）';
+    }
     loadActivity();
   } catch (err) {
     if (st) st.textContent = '✗ ' + err;
@@ -939,7 +959,8 @@ function initLinesPanel() {
     if (event.target && event.target.tagName === 'INPUT') putLines(collectLines(), false);
   });
 
-  document.getElementById('linesGen')?.addEventListener('click', generateLines);
+  document.getElementById('linesGen')?.addEventListener('click', () => generateLines(false));
+  document.getElementById('linesGenReplace')?.addEventListener('click', () => generateLines(true));
   document.getElementById('linesOpen')?.addEventListener('click', openLinesFile);
   document.getElementById('linesClear')?.addEventListener('click', clearLines);
 
@@ -947,7 +968,7 @@ function initLinesPanel() {
   document.getElementById('linesWant')?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      generateLines();
+      generateLines(false);
     }
   });
 
@@ -1026,6 +1047,8 @@ async function loadSettings(force = false) {
     const paw = document.getElementById('setPawCursor');
     const gaze = document.getElementById('setGaze');
     if (paw) paw.checked = ui.paw_cursor !== false;
+    const fx = document.getElementById('setFx');
+    if (fx) fx.checked = ui.click_fx !== false;
     if (gaze) gaze.checked = ui.gaze_follow !== false;
   } catch (err) { /* 读不到就用默认 */ }
 
@@ -1084,6 +1107,7 @@ function initSettingsPanel() {
   for (const [id, key, label] of [
     ['setPawCursor', 'paw_cursor', '🐾 猫爪光标'],
     ['setGaze', 'gaze_follow', '👀 视线跟随'],
+    ['setFx', 'click_fx', '✨ 点击粒子特效'],
   ]) {
     const el = document.getElementById(id);
     if (!el) continue;

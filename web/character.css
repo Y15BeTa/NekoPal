@@ -285,3 +285,17 @@ body.paw-cursor .menu button {
   background: rgba(255, 255, 255, 0.7);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
+
+/* ── ✨ 点击粒子特效层 ────────────────────────────────────────────
+ * 铺满整窗、盖在最上面，但 **不吃鼠标**（否则会把角色挡住点不到 ✗）。
+ * ⚠️ 画在"透明区域"上也没关系 —— 窗口的透明是**背景**透明，
+ *    我们自己画的像素照样显示 ✅。
+ */
+.fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}

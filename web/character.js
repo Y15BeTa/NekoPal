@@ -275,12 +275,119 @@ if (native) {
 // 点一下角色 → **随机动作 + 随机表情** ✗
 // ⚠️ 不眨眼 ✗（眨眼是自动的，用户明确说过"不要点一下就眨"✗）
 // ⚠️ 不缩放 ✗（用户明确说过不要"点一下整个人缩一下"✗）
-character.addEventListener('click', () => {
+
+// ── ✨ 点击粒子特效 ──────────────────────────────────────────────────
+// 用户要求：「鼠标在角色身上点击时设计一个合适的粒子散开特效」。
+//
+// 为什么用工整的 `<canvas>` 而不是一堆 `<div>`：
+//   一次点下去要 20 个粒子，div 每次都要新建 / 销毁 DOM，点快了会明显卡；
+//   canvas 只画一帧、画完就停（没有粒子时**整个 rAF 停掉**，完全不占 CPU ✗）。
+//
+// ⚠️ 它画在"透明区域"上也没关系 —— 窗口的透明是**背景**透明，
+//    我们自己画的像素照样显示 ✅（所以粒子可以飞出她的轮廓 ✗）。
+const fxCanvas = document.getElementById('fx');
+const fxCtx = fxCanvas ? fxCanvas.getContext('2d') : null;
+let fxOn = true;
+let fxParts = [];
+let fxRaf = 0;
+let fxLast = 0;
+const fxPaw = new Image();
+fxPaw.src = '/paw.png'; // 顺手用那只猫爪当粒子，萌一点
+
+function fxResize() {
+  if (!fxCanvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  fxCanvas.width = Math.max(1, Math.round(window.innerWidth * dpr));
+  fxCanvas.height = Math.max(1, Math.round(window.innerHeight * dpr));
+  if (fxCtx) fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+fxResize();
+window.addEventListener('resize', fxResize);
+
+/** 在她身上点一下 → 散开一簇粒子。 */
+function fxBurst(x, y) {
+  if (!fxOn || !fxCanvas) return;
+  const n = 18;
+  // 一圈粉色小圆点（主）+ 两三只小爪子（点缀）
+  for (let i = 0; i < n; i++) {
+    const a = (Math.PI * 2 * i) / n + (Math.random() - 0.5) * 0.5;
+    const sp = 1.6 + Math.random() * 3.6;
+    fxParts.push({
+      kind: i % 7 === 0 ? 'paw' : 'dot',
+      x,
+      y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - 1.1, // 整体略微往上飞
+      r: 1.6 + Math.random() * 2.6,
+      life: 0.75 + Math.random() * 0.45,
+      age: 0,
+      hue: 335 + Math.random() * 18,
+    });
+  }
+  // 一个快速扩散的圆环（"啪"一下的打击感）
+  fxParts.push({ kind: 'ring', x, y, r: 4, life: 0.34, age: 0, vx: 0, vy: 0 });
+  if (!fxRaf) {
+    fxLast = performance.now();
+    fxRaf = requestAnimationFrame(fxFrame);
+  }
+}
+
+function fxFrame(now) {
+  fxRaf = 0;
+  if (!fxCtx || !fxCanvas) return;
+  const dt = Math.min((now - fxLast) / 1000, 0.05);
+  fxLast = now;
+
+  fxCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  const keep = [];
+  for (const p of fxParts) {
+    p.age += dt;
+    if (p.age >= p.life) continue;
+    const t = p.age / p.life; // 0→1
+    const alpha = 1 - t;
+
+    if (p.kind === 'ring') {
+      fxCtx.beginPath();
+      fxCtx.arc(p.x, p.y, p.r + t * 34, 0, Math.PI * 2);
+      fxCtx.strokeStyle = 'rgba(255, 150, 190, ' + alpha * 0.55 + ')';
+      fxCtx.lineWidth = 1.6;
+      fxCtx.stroke();
+    } else {
+      p.vy += 7.5 * dt; // 轻微重力，飞出去再落回来
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.kind === 'paw' && fxPaw.complete && fxPaw.naturalWidth) {
+        const s = 11 * (1 - t * 0.35);
+        fxCtx.globalAlpha = alpha * 0.9;
+        fxCtx.drawImage(fxPaw, p.x - s / 2, p.y - s / 2, s, s);
+        fxCtx.globalAlpha = 1;
+      } else {
+        fxCtx.beginPath();
+        fxCtx.arc(p.x, p.y, p.r * (1 - t * 0.4), 0, Math.PI * 2);
+        fxCtx.fillStyle = 'hsla(' + p.hue + ', 100%, 78%, ' + alpha + ')';
+        fxCtx.fill();
+      }
+    }
+    keep.push(p);
+  }
+  fxParts = keep;
+
+  if (fxParts.length) {
+    fxRaf = requestAnimationFrame(fxFrame);
+  } else {
+    fxCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  }
+}
+
+character.addEventListener('click', (event) => {
   if (dragged) {
     dragged = false; // 拖完松手不算点击 ✗
     return;
   }
   if (!petHandle) return;
+
+  // ✨ 先在点击处炸一簇粒子（和后面的动作/表情/语音各管各的 ✗）
+  fxBurst(event.clientX, event.clientY);
 
   const played = petHandle.playReaction ? petHandle.playReaction() : false;
 
@@ -534,22 +641,52 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ── 窗口缩放 ────────────────────────────────────────────────────────────
+// 尺寸上下限
+const MIN_W = 200;
+const MAX_W = 1200;
+const MIN_H = 260;
+const MAX_H = 1600;
+
+// ⚠️ **自己记着"想要的尺寸"**，不要从 `window.innerWidth` 推 ——
+//    踩过的坑：原生 `setFrame` 之后，页面里的 `innerWidth` **不一定会立刻更新**，
+//    于是"连点两次缩小"会拿**上一次的旧值**去算 → 尺寸来回跳 →
+//    看起来就是"点缩小反而放大"（用户实测报的）。
+let wantSize = null;
 
 function zoom(factor) {
   closeMenu();
   let w;
   let h;
   if (!factor) {
+    wantSize = null;
     w = BASE_SIZE.w;
     h = BASE_SIZE.h;
   } else {
-    w = Math.round((window.innerWidth || BASE_SIZE.w) * factor);
-    h = Math.round((window.innerHeight || BASE_SIZE.h) * factor);
+    const cur = wantSize || {
+      w: window.innerWidth || BASE_SIZE.w,
+      h: window.innerHeight || BASE_SIZE.h,
+    };
+    w = Math.max(MIN_W, Math.min(MAX_W, Math.round(cur.w * factor)));
+    h = Math.max(MIN_H, Math.min(MAX_H, Math.round(cur.h * factor)));
+    wantSize = { w, h };
   }
-  w = Math.max(200, Math.min(1200, w));
-  h = Math.max(260, Math.min(1600, h));
   toNative('resize', { w, h });
-  log('窗口缩放 → ' + w + '×' + h);
+  log('窗口缩放 → ' + w + '×' + h + '（×' + (factor || '重置') + '）');
+}
+
+// 🖐️ 触控板**双指捏合** = 缩放（macOS 把捏合报成 `ctrl+wheel`）
+//    ⚠️ 只在"她身上"收得到 —— 角色窗的透明区是点穿的，捏合到不了网页。
+//    所以是"捏在她身上缩放"，这也最合直觉。
+if (character) {
+  character.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey) return; // 普通滚动不管
+      e.preventDefault();
+      zoom(e.deltaY < 0 ? 1.07 : 1 / 1.07); // 捏合步长细一点，手感才跟手
+    },
+    { passive: false },
+  );
 }
 
 /** 窗口尺寸变了：重设画布尺寸 → 重新适配模型 → 重报可点区域 ✗ */

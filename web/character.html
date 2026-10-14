@@ -20,6 +20,9 @@
     那些字符在 WebKit 里会走**彩色 emoji 字体**，在浅色毛玻璃上糊成一团、
     根本看不出是什么 ✗（用户实测反馈）。SVG 笔锋锐利、粗细可控 ✅
   -->
+  <!-- ✨ 粒子特效层：盖在最上面，但不吃鼠标（pointer-events: none） -->
+  <canvas id="fx" class="fx"></canvas>
+
   <div class="stage">
     <!-- 角色本体：唯一可拖、可点的"实体" -->
     <div class="character" id="character">

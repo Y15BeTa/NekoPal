@@ -288,13 +288,66 @@ export async function mountPet(opts: MountOptions): Promise<PetHandle> {
    */
   let mvpMatrix = new CubismMatrix44();
 
+  /** 复位姿势下的包围盒（**缓存** —— 见 measureRestBounds 的注释）。 */
+  let restBounds: { x0: number; y0: number; x1: number; y1: number } | null = null;
+
+  /**
+   * 量出「**中立姿势**」下的模型包围盒。
+   *
+   * ⚠️ 为什么不直接量当前帧（2026-10-14 修的真实 bug）：
+   * `getDrawableVertexPositions` 给的是**当前这一帧的姿势**的顶点 ——
+   * 她要是刚好低着头 / 侧着身，包围盒就比站立时**矮一截**，
+   * `fit()` 于是**放大过头**；等她把头抬起来 → **头顶被裁掉**。
+   * 用户报的「点放大之后头部裁切」就是这个，而且它**时有时无**，
+   * 取决于你点缩放的那一瞬间她在做什么动作，极难查。
+   *
+   * 所以：量之前先把所有参数**复位到默认值**、量完再还原 ——
+   * 得到的是一个**不随动作变化**的稳定取景框，并且缓存起来。
+   */
+  function measureRestBounds() {
+    if (restBounds) return restBounds;
+
+    const saved: Array<{ id: unknown; v: number }> = [];
+    let reset = false;
+    try {
+      const n = model.getParameterCount();
+      for (let k = 0; k < n; k++) {
+        saved.push({ id: model.getParameterId(k), v: Number(model.getParameterValueByIndex(k)) });
+      }
+      for (let k = 0; k < n; k++) {
+        model.setParameterValueByIndex(k, Number(model.getParameterDefaultValue(k)));
+      }
+      reset = true;
+    } catch (err) {
+      // 拿不到参数表就退回「量当前帧」（老行为），至少不会崩
+      log('取景：复位姿势失败（' + (err && err.message ? err.message : err) + '）→ 退回量当前帧');
+    }
+
+    model.update();
+    const b = modelBounds();
+
+    if (reset) {
+      try {
+        for (const s0 of saved) model.setParameterValueById(s0.id as never, s0.v);
+        model.update();
+      } catch (err) { /* 还原失败也无妨：下一帧本来就会重算 */ }
+    }
+
+    restBounds = b;
+    log(
+      '取景：中立姿势 ' + (b.x1 - b.x0).toFixed(3) + '×' + (b.y1 - b.y0).toFixed(3) +
+        (reset ? ' ✅（已复位测量，缩放不会再切头）' : '（当前帧，可能有偏差）'),
+    );
+    return b;
+  }
+
   function fit(): void {
     // ⚠️ 必须先 update 一次再量 ✗：getDrawableVertexPositions 给的是"上一帧的顶点"，
     //    挂载时还没跑过任何一帧，量到的是空数据 ✗
     model.update();
 
     const canvasAspect = canvas.width / canvas.height;
-    const b = modelBounds();
+    const b = measureRestBounds();
     const bw = b.x1 - b.x0;
     const bh = b.y1 - b.y0;
     const cx = (b.x0 + b.x1) / 2;

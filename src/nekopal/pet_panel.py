@@ -273,17 +273,22 @@ def run(
                 )
                 self._dirty = True  # 让 _tick 稍后把新位置落盘
             elif action == "resize":
-                # 窗口缩放（右键菜单里的放大/缩小 ✗）
-                # 以**左下角**为锚点，所以窗口是往上/往右长 ✗ —— 贴右下角的桌宠
-                # 这个方向最自然（不会跑出屏幕 ✗）
+                # 窗口缩放（右键菜单的放大/缩小、以及触控板捏合）
+                # 以**左下角**为锚点 —— 贴右下角的桌宠这样长最自然。
                 frame = self._panel.frame()
                 width = float(body.get("w", frame.size.width))
                 height = float(body.get("h", frame.size.height))
                 if width >= 80 and height >= 80:
-                    self._panel.setFrame_display_(
-                        NSMakeRect(frame.origin.x, frame.origin.y, width, height),
-                        True,
-                    )
+                    # ⚠️ **必须夹进屏幕**（2026-10-14 加）：
+                    #    锚点是左下角（往上/往右长），不夹的话贴着右边缘的桌宠
+                    #    一放大就**长出屏幕**，角色被切掉一块 ——
+                    #    用户报的"放大之后头部裁切"里有一部分就是这个。
+                    vis = NSScreen.mainScreen().visibleFrame()
+                    x = min(max(frame.origin.x, vis.origin.x),
+                            vis.origin.x + vis.size.width - width)
+                    y = min(max(frame.origin.y, vis.origin.y),
+                            vis.origin.y + vis.size.height - height)
+                    self._panel.setFrame_display_(NSMakeRect(x, y, width, height), True)
                     self._dirty = True
                     print(
                         "置顶小条：窗口缩放到 {}×{}".format(int(width), int(height)),
