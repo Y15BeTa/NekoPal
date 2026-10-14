@@ -198,6 +198,7 @@ def run(
         NSPanel,
         NSScreen,
         NSStatusWindowLevel,
+        NSView,
         NSViewHeightSizable,
         NSViewWidthSizable,
         NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -455,8 +456,26 @@ def run(
     saved = _load_origin(state_path)
     if saved is not None:
         x, y, w, h = saved
+        # ⚠️ **必须夹进屏幕**（2026-10-14 加）：
+        #    存档里可能是个**屏幕外**的位置（换过显示器 / 拖到过边角），
+        #    那样启动后是"进程在跑、但你看不见" —— 用户会以为**人物没了**
+        #    （真实踩到：窗口在 AppKit y=-56，屏幕只有 956 高，一半在屏幕下面）。
+        vis = NSScreen.mainScreen().visibleFrame()
+        fx, fy = float(x), float(y)
+        cw = float(w or 0) or float(panel.frame().size.width)
+        ch = float(h or 0) or float(panel.frame().size.height)
+        if cw > 0 and ch > 0:
+            x = min(max(fx, vis.origin.x), vis.origin.x + vis.size.width - cw)
+            y = min(max(fy, vis.origin.y), vis.origin.y + vis.size.height - ch)
+        if (fx, fy) != (float(x), float(y)):
+            print(
+                "置顶小条：上次的位置在屏幕外（{:.0f},{:.0f}）→ 已拉回（{:.0f},{:.0f}）".format(
+                    fx, fy, float(x), float(y)
+                ),
+                flush=True,
+            )
         if w and h:
-            panel.setFrame_display_(NSMakeRect(x, y, w, h), False)
+            panel.setFrame_display_(NSMakeRect(x, y, float(w), float(h)), False)
         else:
             panel.setFrameOrigin_(NSMakePoint(x, y))
 
@@ -523,7 +542,8 @@ def run(
     # 「鼠标在不在身上」，顺手切光标不额外花钱。
     paw = {
         "cursor": None, "ok": None, "wanted": None, "checked": -9.0,
-        "rects": None, "tracked": False, "delegate": None, "image": None, "dbg_at": 0.0,
+        "rects": None, "tracked": False, "delegate": None, "image": None,
+        "dbg_at": 0.0, "rect_at": 0.0, "rect_calls": 0, "rect_view": None,
     }
 
     def _make_paw_owner():
@@ -588,10 +608,21 @@ def run(
             # 跟踪区域只装一次（光标加载好之后）
             if enabled and paw["cursor"] is not None:
                 _install_paw_tracking()
-                _install_cursor_rects_for_webview()
+                _install_cursor_rects_view()
             # 热区变了 → 让窗口重新收一次「光标区域」（不然新位置不算数）
-            if paw["rects"] is not bridge._hot_rects:
-                paw["rects"] = bridge._hot_rects
+            rects_now = bridge._hot_rects
+            if paw["rects"] is not rects_now:
+                paw["rects"] = rects_now
+                _refresh_cursor_rects()
+            # ⚠️ 而且**定期重申**（约 2 秒一次）—— 用户报过：
+            #    「切换到另一个全屏页面之后，猫爪光标又消失了」。
+            #    那是窗口服务器**重算光标区域的时机被错过了** ✗；
+            #    定期 invalidate 一下就能自愈，代价可以忽略。
+            import time as _t2
+
+            now2 = _t2.monotonic()
+            if now2 - paw.get("rect_at", 0.0) > 2.0:
+                paw["rect_at"] = now2
                 _refresh_cursor_rects()
             want = inside and enabled and paw["cursor"] is not None
             if want:
@@ -722,67 +753,69 @@ def run(
     # ⚠️ 必须留引用：跟踪区域的 owner 是**弱引用**，被 GC 掉就再也不回调了
     paw["delegate"] = _PawCursorOwner.alloc().init()
 
-    def _install_cursor_rects_for_webview() -> None:
-        """给 `WKWebView` 补一个 `resetCursorRects`，让她那块区域**由窗口自己声明光标**。
+    class _PawCursorView(NSView):
+        """铺在最上面、专门声明「光标区域」的透明视图。
 
-        ## 为什么非要这么绕（2026-10-14，靠用户的线索才想通）
+        ## 为什么要做成**子类视图**（2026-10-14，试了三种才通）
 
-        用户报的现象：「猫爪时好时坏；**当光标移到屏幕下边缘时才变成猫爪**」。
+        目标：让窗口自己声明"她那一块用猫爪光标"，这样窗口服务器
+        **不会**每次鼠标移动都拿默认箭头盖掉我们设的光标。
 
-        算一下几何就明白了：角色窗占屏幕 y=321~929，而屏幕下边缘是 y≈954 ——
-        **那已经在窗口外面了**。所以真相是：
+        走过的弯路：
+        ① 在 tick 里反复 `NSCursor.set()` —— 一直被箭头盖掉（治标不治本）
+        ② 直接 `view.addCursorRect_cursor_()` —— 窗口下一次重算就清掉了
+        ③ 用 `objc.classAddMethods` 给 `WKWebView` 补 `resetCursorRects` ——
+           **装上了，但窗口从来不调它**（它不是我们自己的视图）
+        ④ ✅ **加一个子类视图**：它是我们自己的 `NSView`，
+           窗口的重算流程**一定会调它的 `resetCursorRects`**。
 
-        · `NSCursor.set()` **是生效的**；
-        · 但**只要光标还在我们窗口里**，窗口服务器就按「本窗口没声明光标」的规则
-          **持续用默认箭头覆盖它**（每次鼠标移动都盖一次）；
-        · 一旦光标**离开窗口**，没人再覆盖 → 我们设的猫爪就**留住了**。
-
-        所以关键不是"多设几次"，而是**让窗口自己声明**：把她那一块登记成
-        「光标区域」（cursor rect），窗口服务器就会用我们的猫爪，而不是箭头。
-
-        ⚠️ 光标区域**必须在 `resetCursorRects` 里加**才行 ——
-        在外面直接调 `addCursorRect:` 会被窗口下一次 reset 时清掉 ✗
-        （之前试过，失败了，就是踩这个）。pyobjc 没法直接子类化已有的
-        `WKWebView`，所以用 `classAddMethods` 给它的类**补一个方法** ✓。
+        `hitTest_` 返回 None → 鼠标事件**穿透**到下面的网页 ✅
+        （光标区域是按**几何**算的，不受 hitTest 影响 ✗）
         """
 
-        global _CURSOR_RECTS_PATCHED
-        if _CURSOR_RECTS_PATCHED:
+        def resetCursorRects(self):  # noqa: N802 - 必须是 ObjC 选择器名
+            try:
+                if paw["cursor"] is None or not _paw_wanted():
+                    return
+                h_view = float(self.bounds().size.height)
+                added = 0
+                for r in bridge._hot_rects or []:
+                    w, hh = float(r.get("w", 0)), float(r.get("h", 0))
+                    if w <= 1 or hh <= 1:
+                        continue
+                    # 网页报的是「左上原点」，NSView 是「左下原点」
+                    self.addCursorRect_cursor_(
+                        NSMakeRect(r["x"], h_view - r["y"] - hh, w, hh),
+                        paw["cursor"],
+                    )
+                    added += 1
+                paw["rect_calls"] = paw.get("rect_calls", 0) + 1
+                if paw["rect_calls"] <= 3 or paw["rect_calls"] % 20 == 0:
+                    print(
+                        "置顶小条：重算光标区域（第 {} 次，登记 {} 块）".format(
+                            paw["rect_calls"], added
+                        ),
+                        flush=True,
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
+        def hitTest_(self, _point):  # noqa: N802
+            return None  # 事件穿透到下面的网页
+
+    def _install_cursor_rects_view() -> None:
+        """把上面那个视图铺上去（只装一次）。"""
+
+        if paw.get("rect_view") is not None:
             return
-
         try:
-            import objc
-            from AppKit import NSMakeRect, WKWebView
-
-            def resetCursorRects(self):  # noqa: N802 - 名字必须**正好**是 ObjC 选择器
-                """由窗口在合适的时机回调 —— 在这里登记她的光标区域。
-
-                ⚠️ 函数名不能随便起 ✗：pyobjc 的 `classAddMethods` 用
-                `__name__` 反推选择器名（下划线→冒号），名字不对就装不上 ✗
-                （踩过：`'str' object has no attribute '__name__'`）。
-                """
-                try:
-                    if paw["cursor"] is None or not _paw_wanted():
-                        return
-                    h_view = float(self.bounds().size.height)
-                    for r in bridge._hot_rects or []:
-                        w, hh = float(r.get("w", 0)), float(r.get("h", 0))
-                        if w <= 1 or hh <= 1:
-                            continue
-                        # 网页报的是「左上原点」，NSView 是「左下原点」
-                        self.addCursorRect_cursor_(
-                            NSMakeRect(r["x"], h_view - r["y"] - hh, w, hh),
-                            paw["cursor"],
-                        )
-                except Exception:  # noqa: BLE001
-                    pass
-
-            # ⚠️ 传的是**函数列表**，不是字典 —— pyobjc 会用 __name__ 反推选择器名
-            objc.classAddMethods(WKWebView, [resetCursorRects])
-            _CURSOR_RECTS_PATCHED = True
-            print("置顶小条：已给 WKWebView 补上 resetCursorRects（光标区域）✅", flush=True)
+            ov = _PawCursorView.alloc().initWithFrame_(view.bounds())
+            ov.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+            view.addSubview_(ov)
+            paw["rect_view"] = ov
+            print("置顶小条：光标区域视图已装上 ✅", flush=True)
         except Exception as exc:  # noqa: BLE001
-            print("置顶小条：补 resetCursorRects 失败（{}）→ 退回只靠 set()".format(exc), flush=True)
+            print("置顶小条：光标区域视图装不上（{}）".format(exc), flush=True)
 
     def _refresh_cursor_rects() -> None:
         """热区变了 / 光标加载好了 → 让窗口重新收一次光标区域。"""
@@ -791,6 +824,34 @@ def run(
             view.window().invalidateCursorRectsForView_(view)
         except Exception:  # noqa: BLE001
             pass
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🐾 猫爪光标：**试过哪些、都为什么不行**（2026-10-14，别再重走 ✗）
+    #
+    # | 办法 | 结果 |
+    # | --- | --- |
+    # | CSS `cursor: url(...)` | ❌ 这个**非激活面板**上完全不生效（连默认的 `grab` 都不显示）|
+    # | tick 里反复 `NSCursor.set()` | ⚠️ **部分有效**：光标**离开窗口**后能留住；在窗口**里**会被默认箭头盖掉 |
+    # | `view.addCursorRect_cursor_()` | ❌ 窗口下一次重算光标区域就把它清掉 |
+    # | 给 `WKWebView` 补 `resetCursorRects`（classAddMethods）| ❌ 装上了，但窗口**从不调用**它 |
+    # | 子类 `NSView` 铺一层 + `hitTest → nil` | ❌ 同上，窗口不调 |
+    # | `NSTrackingArea` + `NSTrackingActiveAlways` + `cursorUpdate:` | ⚠️ 能设，但同样被窗口的默认箭头盖掉 |
+    #
+    # **根因**（靠用户给的线索才想通 ✗）：
+    # 用户报「猫爪时好时坏；光标移到**屏幕下边缘**时才出现」——
+    # 算几何：窗口占 y=321~929，屏幕下边缘 y≈954 —— **那已经在窗口外面**。
+    # ⇒ 我们对**窗口外面**的光标说了算（没人覆盖），对**窗口里面**的说了不算 ✗。
+    # 也就是：**窗口服务器对本窗口内的光标有最终决定权**，
+    # 而我们的窗口（非激活 NSPanel + 全透明 WKWebView）**声明不了光标**。
+    #
+    # **下一步该往哪走**（见 `NekoPal-笔记/开发文档/猫爪光标诊断.md`）：
+    #   ① 在**网页里画**一只跟着鼠标的爪子 + 让系统光标不可见
+    #      （前置：先验证 `NSCursor.hide()` 在这个窗口上到底有没有用 ✗）
+    #   ② 或者放弃"系统光标"，改成**点击时**才出现的爪子反馈
+    #
+    # 下面这段 `NSTrackingArea` 保留着 —— 它虽然单独不够，但**配合 `set()`
+    # 在"光标离开窗口"的场景下是有效的**，删了反而少一层 ✗。
+    # ══════════════════════════════════════════════════════════════════════
 
     def _install_paw_tracking() -> None:
         """整窗装**一个**跟踪区域，让 `cursorUpdate:` / `mouseMoved:` 能被叫到。
