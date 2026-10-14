@@ -1447,6 +1447,18 @@ async function loadSettings(force = false) {
   document.getElementById('setPrefetch').value = s.prefetch ?? 3;
   document.getElementById('setCacheMb').value = s.cache_max_mb ?? 500;
   loadCleanGrid(s.clean);
+
+  // 🗣️ 挂机自发生成（R16）
+  const idleOn = document.getElementById('setIdle');
+  if (idleOn) idleOn.checked = s.idle_enabled !== false;
+  const iMin = document.getElementById('setIdleMin');
+  if (iMin) iMin.value = s.idle_min_minutes ?? 8;
+  const iMax = document.getElementById('setIdleMax');
+  if (iMax) iMax.value = s.idle_max_minutes ?? 20;
+  const iHours = document.getElementById('setIdleHours');
+  if (iHours) iHours.value = s.idle_hours ?? '9-23';
+  const iPool = document.getElementById('setIdleToPool');
+  if (iPool) iPool.checked = s.idle_to_pool === true;
   const pitchEl = document.getElementById('setPitch');
   if (pitchEl) pitchEl.value = s.pitch ?? 0;
 
@@ -1489,6 +1501,27 @@ function initSettingsPanel() {
     setPrefetch: { key: 'prefetch', read: (el) => parseInt(el.value, 10) || 0, ok: '预取句数已' },
     setCacheMb: { key: 'cache_max_mb', read: (el) => parseInt(el.value, 10) || 500, ok: '缓存上限已' },
     setPitch: { key: 'pitch', read: (el) => parseFloat(el.value) || 0, ok: '音高已' },
+    setIdle: { key: 'idle_enabled', read: (el) => el.checked, ok: '挂机自发生成已' },
+    setIdleMin: {
+      key: 'idle_min_minutes',
+      read: (el) => parseInt(el.value, 10) || 8,
+      ok: '间隔下限已',
+    },
+    setIdleMax: {
+      key: 'idle_max_minutes',
+      read: (el) => parseInt(el.value, 10) || 20,
+      ok: '间隔上限已',
+    },
+    setIdleHours: {
+      key: 'idle_hours',
+      read: (el) => (el.value || '9-23').trim(),
+      ok: '允许时段已',
+    },
+    setIdleToPool: {
+      key: 'idle_to_pool',
+      read: (el) => el.checked,
+      ok: '「存进点击池」已',
+    },
   };
 
   for (const [id, cfg] of Object.entries(map)) {
@@ -1514,6 +1547,15 @@ function initSettingsPanel() {
   });
 
   document.getElementById('settingsRefresh')?.addEventListener('click', () => loadSettings(true));
+
+  document.getElementById('idleOpen')?.addEventListener('click', async () => {
+    try {
+      await fetch('/api/idle/open', { method: 'POST' });
+      setStatus('已打开「额外要求」文件 ✅');
+    } catch (err) {
+      setStatus('打不开：' + err);
+    }
+  });
 
   // 🌟 存 `ui.json` 的那两个 ✗（猫爪光标 / 视线跟随 ✗）
   //    走 `/api/ui` 而不是 `/api/settings` —— 角色窗**每 3 秒轮询 `/api/ui`** ✅，

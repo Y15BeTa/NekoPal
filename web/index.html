@@ -255,6 +255,57 @@
           <button id="chatRefresh" class="ghost">刷新</button>
         </div>
 
+        <hr class="card-sep">
+
+        <h3 class="sub" style="margin-top:0;padding-top:0;border-top:0">🗣️ 挂机时偶尔自己说一句</h3>
+        <p class="note">
+          你**没有**在跟她说话的时候，她隔一阵子**自己想到一句**说给你听。
+          和"点击反馈"不同：这条**允许慢**（可以现打大模型），所以更应景；
+          但正因为慢，它**不适合**当点击的即时反馈。
+        </p>
+
+        <label class="switch" for="setIdle">
+          <input type="checkbox" id="setIdle">
+          <span class="knob" aria-hidden="true"></span>
+          <span class="sw-text">
+            <b>开着（偶尔自己开口）</b>
+            <em>关掉她就只在你点击时说话。你刚点过她、或已经有话在播时，她会自动跳过这轮。</em>
+          </span>
+        </label>
+
+        <div class="row">
+          <span class="row-label">间隔</span>
+          <input type="number" id="setIdleMin" min="1" max="240" step="1">
+          <span class="dim">~</span>
+          <input type="number" id="setIdleMax" min="2" max="480" step="1">
+          <span class="dim">分钟</span>
+          <span class="row-hint">在这两个值之间**随机**取一个 —— 固定节奏会很机械，也容易被你预期到</span>
+        </div>
+
+        <div class="row">
+          <span class="row-label">允许时段</span>
+          <input type="text" id="setIdleHours" size="8" placeholder="9-23">
+          <span class="row-hint">
+            24 小时制，<code>9-23</code> 表示 09:00~22:59。**半夜不会突然出声**（这条是硬规矩）。
+          </span>
+        </div>
+
+        <label class="switch" for="setIdleToPool">
+          <input type="checkbox" id="setIdleToPool">
+          <span class="knob" aria-hidden="true"></span>
+          <span class="sw-text">
+            <b>把她说过的也存进点击台词池</b>
+            <em>开着的话，挂机时现编的好句子会被收进池子，以后点击也会抽到它。</em>
+          </span>
+        </label>
+
+        <div class="row">
+          <button id="idleOpen" class="ghost">📝 打开「额外要求」文件</button>
+          <span class="row-hint">
+            想让她早上说早安、晚上提醒你睡觉、多提某件事 —— 写进那个文件就行，**不用改代码**。
+          </span>
+        </div>
+
         <h3 class="sub">📋 活动记录</h3>
         <div id="activityList" class="activity-list"><div class="act-empty">（展开后加载）</div></div>
         <div class="pane-actions">

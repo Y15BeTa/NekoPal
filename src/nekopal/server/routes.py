@@ -64,6 +64,17 @@ def _load_ui() -> dict:
         "paw_cursor": True,   # 🐾 鼠标移到角色上变成小猫爪
         "gaze_follow": True,  # 眼睛和头看向光标
         "click_fx": True,     # ✨ 点击时的粒子特效
+        #: 🗣️ 挂机自发生成（R16）—— ⚠️ **必须在 defaults 里** ✗，
+        #: 因为 `_save_ui` 只保留这里认识的键，不写就静默丢掉 ✗
+        #: （这个坑已经踩第 4 次了：voice / auto_read / pitch / idle ✗）
+        "idle_enabled": True,
+        "idle_min_minutes": 8,
+        "idle_max_minutes": 20,
+        "idle_hours": "9-23",
+        "idle_to_pool": False,
+        #: ⚠️ `rate`（语速）也一直漏在这儿 —— 界面选过语速，重启就回 1.0 ✗
+        #: （是上面那条新测试抓出来的 ✗）
+        "rate": 1.0,
     }
     try:
         data = json.loads(_ui_file().read_text(encoding="utf-8"))

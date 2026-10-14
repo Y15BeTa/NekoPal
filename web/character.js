@@ -1006,3 +1006,86 @@ function mouthLoop() {
 ensureLipAnalyser();
 pollRemoteLip();
 requestAnimationFrame(mouthLoop);
+
+// ── 🗣️ 挂机时偶尔自己说一句（R16）────────────────────────────────────
+// 为什么放在**角色窗**：说话的是她，而播放器（和口型分析）都在这个窗口里。
+// 后端负责三件事（生成 / 时段闸 / 兜底），这里只负责**什么时候问她**。
+//
+// ⚠️ 三条"别打扰你"的规矩：
+//   · 你刚点过她 → 重新计时（人在场，不用她主动找话）
+//   · 已经有一句在播 → 这轮跳过（不然两句话叠在一起）
+//   · 允许时段由**后端**把关（它才知道现在几点）
+let idleTimer = 0;
+let idleOn = true;
+let idleMin = 8;
+let idleMax = 20;
+let lastTouch = Date.now();
+let idleFired = 0;
+
+function idleReschedule() {
+  clearTimeout(idleTimer);
+  if (!idleOn) return;
+  // ⚠️ 随机间隔（固定节奏会很机械 ✗，而且会让人预期到 ✗）
+  const mins = idleMin + Math.random() * Math.max(1, idleMax - idleMin);
+  const ms = Math.max(30 * 1000, mins * 60 * 1000);
+  // 把"下一次什么时候"打进日志 —— 不然"没出声"时根本分不清是
+  // "还没到时间" / "时段不对" / "整条链没跑" ✗（这次就踩了一下 ✗）
+  log('挂机：下一次至少 ' + (ms / 60000).toFixed(1) + ' 分钟后（间隔 ' + idleMin + '~' + idleMax + ' 分钟）');
+  idleTimer = setTimeout(idleTick, ms);
+}
+
+async function idleTick() {
+  clearTimeout(idleTimer);
+  const quietMin = idleMin * 60 * 1000;
+  // 有人刚碰过她 → 说明人在，重新计时就好
+  if (Date.now() - lastTouch < quietMin) return idleReschedule();
+  // 已经在说话 → 这轮跳过
+  if (voiceEl && !voiceEl.paused) return idleReschedule();
+
+  try {
+    const res = await fetch('/api/idle/say', { method: 'POST' });
+    const d = await res.json();
+    if (d.url) {
+      const el = ensureVoiceEl();
+      el.src = d.url;
+      el.currentTime = 0;
+      if (lipCtx && lipCtx.state === 'suspended') lipCtx.resume().catch(() => {});
+      await el.play();
+      idleFired += 1;
+      log(
+        '挂机：自己说了一句「' + d.text + '」（' + d.source + ' · ' + d.moment + '）✅',
+      );
+      if (d.fell_back) log('⚠️ 这句退回了兜底音色');
+    } else if (d.skipped) {
+      // disabled / out_of_hours / empty_after_clean —— 都是正常情况，不用报错
+      if (d.skipped === 'out_of_hours' && idleFired === 0) {
+        log('挂机：现在不在允许时段（' + (d.hours || '?') + '）→ 不会自己出声');
+      }
+    }
+  } catch (err) {
+    log('挂机说话失败 ✗ ' + err);
+  }
+  idleReschedule();
+}
+
+async function idleLoadSettings() {
+  try {
+    const s = await (await fetch('/api/settings', { cache: 'no-store' })).json();
+    const wasOn = idleOn;
+    const wasMin = idleMin;
+    const wasMax = idleMax;
+    idleOn = s.idle_enabled !== false;
+    idleMin = Math.max(1, Number(s.idle_min_minutes) || 8);
+    idleMax = Math.max(idleMin, Number(s.idle_max_minutes) || 20);
+    if (idleOn !== wasOn) log('挂机自发生成 ' + (idleOn ? '开 ✅' : '关 ✗'));
+    // ⚠️ **设置变了必须重新排期** —— 否则那个已经排好的（比如 8~20 分钟的）
+    //    定时器会一直挂着，改成 1 分钟也不会生效 ✗（这次就是踩了这个 ✗）
+    if (idleMin !== wasMin || idleMax !== wasMax) idleReschedule();
+  } catch (err) { /* 读不到就按默认值来 */ }
+}
+
+// 每次点她 / 拖她 → 重新计时（"有人在"）
+character.addEventListener('pointerdown', () => { lastTouch = Date.now(); });
+
+idleLoadSettings().then(idleReschedule);
+setInterval(idleLoadSettings, 60 * 1000);   // 设置改了一分钟内生效
