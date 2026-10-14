@@ -692,6 +692,19 @@ function connectLive() {
 
     setStatus('收到外部推送（' + (data.source || '?') + '，' + (data.sentences || 0) + ' 句），自动接上…');
     reader.reset();
+    // ⚠️ 每次收到外部推送，**再体检一次音频 / 口型**（2026-10-14 修的真 bug）
+    //
+    // 用户报：「自动朗读 opencode 的时候，口型没有动」。
+    // 根因：startLipReporting() 只在**音频解锁之后**才建立 WebAudio 图 ——
+    // 因为 createMediaElementSource 会把元素**永久**改道，若 AudioContext 还在
+    // suspended，声音会**直接变哑**，所以必须等解锁。
+    // 而解锁只绑在主窗的 pointerdown 上 —— **用户平时根本不点主窗**：
+    // 他用 opencode，插件直接把文字推过来，主窗一次都没被点过 → 口型上报从未启动。
+    //
+    // 所以这里再试一次：一旦"现在真的能出声了"，就把口型接上。
+    if (!lip) {
+      probeAutoplay().then((ok) => { if (ok) startLipReporting(); });
+    }
     subscribe(data.task_id, 0);
   });
 
