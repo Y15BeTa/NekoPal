@@ -309,6 +309,188 @@ function closeStream() {
 
 const WARN = '⚠️';
 
+// ── 音色：自定义两级下拉 ────────────────────────────────────────────────
+// 为什么不用原生 `<select>` + `<optgroup>`：**optgroup 只能平铺** ——
+// 508 个音色全铺出来，找一个要滚半天。用户要的是「**点一下才展开**」。
+//
+// 做法：外面套一个自己画的下拉；原生 `<select>` 留着当**唯一状态来源**
+// （它的 value / change 已经有别的代码在用，见 savePrefs / syncVoiceToServer），
+// 只是藏起来 —— 这样所有既有逻辑一行都不用改。
+function renderVoicePicker(voices, backends) {
+  const list = document.getElementById('vselList');
+  if (!list) return;
+
+  const groups = new Map();
+  for (const v of voices) {
+    if (!groups.has(v.backend)) groups.set(v.backend, []);
+    groups.get(v.backend).push(v);
+  }
+
+  const mkItem = (v) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vsel-item';
+    b.dataset.id = v.id;
+    b.dataset.search = (v.name + ' ' + v.id).toLowerCase();
+    b.textContent = v.name + (v.license === 'unofficial' ? ' ' + WARN : '');
+    if (v.license === 'unofficial') b.title = '未授权来源：仅供个人使用，请自行确认合法性';
+    b.setAttribute('role', 'option');
+    b.addEventListener('click', () => {
+      els.voice.value = v.id;
+      els.voice.dispatchEvent(new Event('change')); // 复用既有的「换音色」逻辑
+      syncVoiceLabel(); // ⚠️ 必须手动同步 —— 原生 select 的 change 不会更新这个自绘按钮
+      closeVoicePicker();
+    });
+    return b;
+  };
+
+  list.innerHTML = '';
+
+  // ① rvc 音色 **平铺在最上面**（用户要求：rvc 不变）
+  for (const v of groups.get('rvc') || []) list.appendChild(mkItem(v));
+
+  // ② 其余后端各一个**可展开的二级列表**；顺序本地优先
+  const rest = [...groups.keys()].filter((b) => b !== 'rvc');
+  rest.sort((a, b) => {
+    const wa = backends.get(a)?.offline ? 0 : 1;
+    const wb = backends.get(b)?.offline ? 0 : 1;
+    return wa - wb || a.localeCompare(b);
+  });
+  for (const backend of rest) {
+    const arr = groups.get(backend);
+    if (!arr || !arr.length) continue;
+    const info = backends.get(backend);
+    const kind = info ? (info.offline ? '本地 · 离线可用' : '在线') : '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'vsel-group';
+
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'vsel-head';
+    head.setAttribute('aria-expanded', 'false');
+    head.innerHTML =
+      '<span class="vsel-arrow">▶</span>' +
+      '<span>' + escapeHtml((info?.name || backend) + (kind ? '（' + kind + '）' : '')) + '</span>' +
+      '<span class="vsel-count">' + arr.length + ' 个</span>';
+
+    const kids = document.createElement('div');
+    kids.className = 'vsel-kids';
+    kids.hidden = true;
+    for (const v of arr) kids.appendChild(mkItem(v));
+
+    head.addEventListener('click', () => {
+      const open = kids.hidden;
+      kids.hidden = !open;
+      head.setAttribute('aria-expanded', String(open));
+    });
+
+    wrap.append(head, kids);
+    list.appendChild(wrap);
+  }
+  syncVoiceLabel();
+}
+
+/** 按钮上显示「当前音色」，并高亮列表里选中的那条。 */
+function syncVoiceLabel() {
+  const label = document.getElementById('vselLabel');
+  const list = document.getElementById('vselList');
+  if (!label) return;
+  const opt = els.voice.selectedOptions?.[0];
+  label.textContent = opt ? opt.textContent.trim() : (els.voice.value || '（没选）');
+  if (list) {
+    for (const el of list.querySelectorAll('.vsel-item')) {
+      el.setAttribute('aria-selected', String(el.dataset.id === els.voice.value));
+    }
+  }
+}
+
+function openVoicePicker() {
+  const btn = document.getElementById('vselBtn');
+  const pop = document.getElementById('vselPop');
+  const search = document.getElementById('vselSearch');
+  if (!btn || !pop) return;
+  pop.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  if (search) {
+    search.value = '';
+    filterVoicePicker('');
+    search.focus();
+  }
+  const cur = pop.querySelector('.vsel-item[aria-selected="true"]');
+  if (cur) cur.scrollIntoView({ block: 'center' });
+}
+
+function closeVoicePicker() {
+  const btn = document.getElementById('vselBtn');
+  const pop = document.getElementById('vselPop');
+  if (!btn || !pop) return;
+  pop.hidden = true;
+  btn.setAttribute('aria-expanded', 'false');
+}
+
+/** 搜索：命中的留下、**命中的组自动展开**、没命中的整组藏起来。 */
+function filterVoicePicker(q) {
+  const pop = document.getElementById('vselPop');
+  if (!pop) return;
+  const needle = (q || '').trim().toLowerCase();
+  let anyTop = false;
+  for (const el of pop.querySelectorAll('.vsel-item')) {
+    const hit = !needle || (el.dataset.search || '').includes(needle);
+    el.hidden = !hit;
+    if (hit && !el.closest('.vsel-group')) anyTop = true;
+  }
+  for (const g of pop.querySelectorAll('.vsel-group')) {
+    const kids = g.querySelector('.vsel-kids');
+    const head = g.querySelector('.vsel-head');
+    const shown = [...kids.querySelectorAll('.vsel-item')].filter((el) => !el.hidden);
+    g.hidden = shown.length === 0;
+    if (needle && shown.length > 0) {
+      kids.hidden = false; // 搜索时自动展开，不然看不到结果
+    } else if (needle) {
+      kids.hidden = true;
+    }
+    head.setAttribute('aria-expanded', String(!kids.hidden));
+  }
+  const groupShown = [...pop.querySelectorAll('.vsel-group')].some((g) => !g.hidden);
+  const list = pop.querySelector('.vsel-list');
+  let empty = pop.querySelector('.vsel-empty');
+  if (!anyTop && !groupShown) {
+    if (!empty && list) {
+      empty = document.createElement('div');
+      empty.className = 'vsel-empty';
+      empty.textContent = '没有匹配的音色';
+      list.appendChild(empty);
+    }
+  } else if (empty) {
+    empty.remove();
+  }
+}
+
+function initVoicePicker() {
+  const btn = document.getElementById('vselBtn');
+  const pop = document.getElementById('vselPop');
+  const search = document.getElementById('vselSearch');
+  if (!btn || !pop) return;
+
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (pop.hidden) openVoicePicker();
+    else closeVoicePicker();
+  });
+  search?.addEventListener('input', () => filterVoicePicker(search.value));
+  document.addEventListener('pointerdown', (e) => {
+    if (pop.hidden) return;
+    if (!pop.contains(e.target) && !btn.contains(e.target)) closeVoicePicker();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !pop.hidden) {
+      e.stopPropagation();
+      closeVoicePicker();
+    }
+  });
+}
+
 async function loadVoices() {
   setStatus('加载音色…');
   try {
@@ -369,6 +551,9 @@ async function loadVoices() {
       els.voice.appendChild(group);
     }
 
+    // 自定义两级下拉（rvc 平铺 / say · edge 点一下才展开）
+    renderVoicePicker(data.voices || [], backends);
+
     const all = data.voices || [];
     const prefs = loadPrefs();
     const preferred = all.find((v) => v.id === prefs.voice)      // 上次选的
@@ -377,6 +562,7 @@ async function loadVoices() {
       || all.find((v) => v.backend === 'say')
       || all[0];
     if (preferred) els.voice.value = preferred.id;
+    syncVoiceLabel();
     if (prefs.rate) {
       els.rate.value = prefs.rate;
       reader.setRate(parseFloat(prefs.rate));
@@ -577,6 +763,7 @@ els.input.addEventListener('keydown', (event) => {
   }
 });
 
+initVoicePicker();
 loadVoices();
 connectLive();
 probeAutoplay();

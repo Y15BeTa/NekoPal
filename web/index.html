@@ -13,7 +13,24 @@
   <div class="brand">NekoPal<span class="sub">猫伴</span></div>
 
   <div class="controls">
-    <label class="field"><span>音色</span><select id="voice"></select></label>
+    <label class="field"><span>音色</span>
+      <!-- 自定义两级下拉：rvc 平铺，say / edge 点一下才展开 -->
+      <div class="vsel" id="vsel">
+        <button type="button" class="vsel-btn" id="vselBtn"
+                aria-haspopup="listbox" aria-expanded="false">
+          <span class="vsel-label" id="vselLabel">加载音色…</span>
+          <span class="vsel-caret" aria-hidden="true">▾</span>
+        </button>
+        <!-- ⚠️ 原生 select 留着当「唯一状态来源」✗：它的 value / change 事件
+             已经有别的代码在用（记住偏好、同步给后端 ✗），所以只把它藏起来 ✅ -->
+        <select id="voice" class="vsel-native" tabindex="-1" aria-hidden="true"></select>
+        <div class="vsel-pop" id="vselPop" hidden>
+          <input type="search" id="vselSearch" class="vsel-search"
+                 placeholder="搜音色（中文名或 id）…" autocomplete="off">
+          <div class="vsel-list" id="vselList" role="listbox"></div>
+        </div>
+      </div>
+    </label>
     <label class="field"><span>语速</span>
       <select id="rate">
         <option value="0.75">0.75×</option>
