@@ -1003,6 +1003,53 @@ def build_router(runtime: Runtime) -> APIRouter:
         runtime.record("lines-cleared")
         return data
 
+    @router.post("/file/extract")
+    async def file_extract(request: Request) -> dict:
+        """把一份**本地文档**的正文抽出来 —— 给「打开文件 → 逐字朗读」用（R20）。
+
+        `.docx` 走这里（**零依赖**解 zip，见 `nekopal/filetext.py` ✗）；
+        `.md` / `.txt` **前端直接读**，不用传上来 ✗。
+
+        ⚠️ 抽不出就**明确报错** ✗ —— 不要假装成功让用户对着空输入框发呆 ✗。
+        """
+
+        import base64
+        import binascii
+
+        from nekopal import filetext
+
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            raise _invalid("JSON 格式不对") from None
+        if not isinstance(payload, dict):
+            raise _invalid("要传一个对象")
+
+        name = str(payload.get("name") or "")
+        raw = str(payload.get("data_base64") or "")
+        if not raw:
+            raise _invalid("要传 {name, data_base64}")
+
+        try:
+            # ⚠️ 用 base64 而不是 multipart —— 后者要装 python-multipart ✗，
+        #    而这个项目一直在刻意控制依赖 ✗。
+            data = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError):
+            raise _invalid("data_base64 不是合法的 base64") from None
+        if len(data) > 40 * 1024 * 1024:
+            raise _invalid("文件太大了（上限 40 MB）")
+
+        try:
+            text, fmt = filetext.extract(name, data)
+        except ValueError as exc:
+            runtime.record("file-extract-failed", name=name, error=str(exc)[:120])
+            raise HTTPException(
+                422, {"code": "EXTRACT_FAILED", "message": str(exc)}
+            ) from None
+
+        runtime.record("file-extracted", name=name, format=fmt, chars=len(text))
+        return {"text": text, "format": fmt, "chars": len(text), "name": name}
+
     @router.post("/voice-check")
     async def voice_check() -> dict:
         """试合成一句，看**有没有偷偷退回兜底音色**。

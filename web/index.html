@@ -66,8 +66,10 @@
   <div class="input-actions">
     <button id="readBtn" class="primary">朗读</button>
     <button id="clearBtn">清空</button>
+    <!-- 📄 打开本地文档（R20）：md / txt 前端直读，docx 交给后端解 -->
+    <button id="fileBtn" class="ghost" title="打开本地文档（md / txt / docx）">📄 打开文件</button>
+    <input type="file" id="filePick" hidden accept=".md,.markdown,.txt,.text,.docx,.docm">
     <span class="hint" id="status">就绪</span>
-  </div>
 </section>
 
 <div id="soundGate" class="sound-gate">

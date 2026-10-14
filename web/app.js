@@ -735,6 +735,67 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault();
   reader.toggle();
 });
+// ── 📄 打开本地文档 → 逐字朗读（R20）───────────────────────────────────
+// 设计：
+//   · .md / .txt —— **前端直接读**（FileReader，一个字节都不上传）
+//   · .docx     —— 交给后端解（零依赖 zip + XML，见 nekopal/filetext.py）
+//   · 读出来只**填进输入框**，不直接开读 —— 用户可以看一眼、改一改再点「朗读」
+//     （万一是一份 200 页的文档，直接念会很突然）
+function initFileOpen() {
+  const btn = document.getElementById('fileBtn');
+  const pick = document.getElementById('filePick');
+  if (!btn || !pick) return;
+
+  btn.addEventListener('click', () => pick.click());
+
+  pick.addEventListener('change', async () => {
+    const file = pick.files && pick.files[0];
+    pick.value = ''; // 同一个文件再选一次也要能触发
+    if (!file) return;
+
+    const name = file.name || '';
+    const ext = (name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+    setStatus('读文件中… ' + name);
+
+    try {
+      let text;
+      if (['.md', '.markdown', '.txt', '.text', ''].includes(ext)) {
+        text = await file.text(); // 纯文本：本地读，不上传 ✅
+      } else {
+        const buf = await file.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 8192) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+        }
+        const res = await fetch('/api/file/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, data_base64: btoa(bin) }),
+        });
+        const d = await res.json();
+        if (!res.ok) {
+          setStatus('✗ ' + (d?.detail?.message || d?.message || ('HTTP ' + res.status)));
+          return;
+        }
+        text = d.text;
+      }
+
+      if (!text || !text.trim()) {
+        setStatus('✗ 这个文件里没读到文字');
+        return;
+      }
+      els.input.value = text;
+      setStatus('已读入「' + name + '」' + text.length + ' 字 —— 看一眼再点「朗读」');
+      report('file-loaded', { name, chars: text.length });
+    } catch (err) {
+      setStatus('✗ 读文件失败：' + err);
+    }
+  });
+}
+
+initFileOpen();
+
 els.readBtn.addEventListener('click', () => startRead(els.input.value));
 els.clearBtn.addEventListener('click', () => {
   els.input.value = '';
