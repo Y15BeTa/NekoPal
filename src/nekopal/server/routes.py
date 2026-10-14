@@ -9,6 +9,7 @@ import mimetypes
 import random
 import re
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,6 +24,10 @@ from nekopal.core.pipeline import prepare_sentences, synthesize_sentence
 from nekopal.packs import config_dir, load_packs
 from nekopal.server.schemas import InvalidRequest, parse_append_request, parse_read_request
 from nekopal.server.state import Runtime
+
+#: 最近**读过**的文本片段（给挂机自发生成当话题线索）。
+#: ⚠️ **只在内存里** —— 不落盘、重启即清（那毕竟是用户的原文）。
+_RECENT_READS: "deque" = deque(maxlen=5)
 
 
 def _ui_file() -> Path:
@@ -310,6 +315,20 @@ def build_router(runtime: Runtime) -> APIRouter:
             _save_ui({"voice": settings.default_voice})
         if isinstance(data.get("rate"), (int, float)):
             settings.rate = float(data["rate"])
+        # 🌟 挂机自发生成（R16）
+        if isinstance(data.get("idle_enabled"), bool):
+            settings.idle_enabled = data["idle_enabled"]
+        if isinstance(data.get("idle_min_minutes"), (int, float)):
+            settings.idle_min_minutes = max(1, min(240, int(data["idle_min_minutes"])))
+        if isinstance(data.get("idle_max_minutes"), (int, float)):
+            settings.idle_max_minutes = max(2, min(480, int(data["idle_max_minutes"])))
+        if settings.idle_max_minutes < settings.idle_min_minutes:
+            settings.idle_max_minutes = settings.idle_min_minutes
+        if isinstance(data.get("idle_hours"), str):
+            settings.idle_hours = data["idle_hours"]
+        if isinstance(data.get("idle_to_pool"), bool):
+            settings.idle_to_pool = data["idle_to_pool"]
+
         if isinstance(data.get("pitch"), (int, float)):
             # 半音，限制在 ±12 之间（再大音色就崩了）
             settings.pitch = max(-12.0, min(12.0, float(data["pitch"])))
@@ -331,7 +350,12 @@ def build_router(runtime: Runtime) -> APIRouter:
         _save_ui(
             {
                 k: getattr(settings, k)
-                for k in ("auto_read", "follow", "prefetch", "cache_max_mb", "rate", "auto_scroll", "pitch")
+                for k in (
+                    "auto_read", "follow", "prefetch", "cache_max_mb",
+                    "rate", "auto_scroll", "pitch",
+                    "idle_enabled", "idle_min_minutes", "idle_max_minutes",
+                    "idle_hours", "idle_to_pool",
+                )
                 if k in data
             }
         )
@@ -369,6 +393,10 @@ def build_router(runtime: Runtime) -> APIRouter:
             req = parse_read_request(data, runtime.settings.default_voice)
         except InvalidRequest as exc:
             raise _invalid(str(exc)) from exc
+
+        # 记一句「最近读过什么」—— 给挂机自发生成当线索（只在内存）
+        if req.text and req.text.strip():
+            _RECENT_READS.append(req.text.strip()[:400])
 
         # 🌟 自动朗读开关（`auto_read` ✗）：
         #   关掉之后，**外部推送**（opencode 插件等）只被"收到"，不自动出声 ✗。
@@ -1049,6 +1077,116 @@ def build_router(runtime: Runtime) -> APIRouter:
 
         runtime.record("file-extracted", name=name, format=fmt, chars=len(text))
         return {"text": text, "format": fmt, "chars": len(text), "name": name}
+
+    @router.post("/idle/say")
+    async def idle_say() -> dict:
+        """**挂机时自发说一句**（R16）—— 由角色窗定时调用。
+
+        和点击反馈的关键区别：点击反馈要**快**，所以只能从预生成池里抽；
+        而挂机自发**允许慢** —— 可以打一次大模型、等它两秒，
+        因为它不是"我点了一下"的即时回应。
+
+        素材：角色人设 + 私人信息 + **最近读过的文字**（只在内存）
+              + 当前时段 + 用户自己写的 `idle_prompt.md`
+
+        ⚠️ 三道闸：
+        · 开关关着 → 不做
+        · **不在允许时段** → 不做（半夜突然出声会吓到人）
+        · 没配 LLM → **退回预生成池 / 静态台词**（不要哑掉）
+        """
+
+        import datetime
+        import random as _rnd
+
+        from nekopal import chat as chat_mod
+
+        settings = runtime.settings
+        if not settings.idle_enabled:
+            return {"skipped": "disabled"}
+
+        # 时段闸：`9-23` 表示 09:00 ~ 22:59
+        try:
+            lo, hi = (int(x) for x in str(settings.idle_hours or "0-24").split("-", 1))
+        except Exception:  # noqa: BLE001
+            lo, hi = 0, 24
+        now = datetime.datetime.now()
+        inside = lo <= now.hour < hi if lo <= hi else (now.hour >= lo or now.hour < hi)
+        if not inside:
+            return {"skipped": "out_of_hours", "hours": settings.idle_hours}
+
+        part = ("凌晨", "早上", "上午", "中午", "下午", "傍晚", "晚上", "深夜")[
+            min(7, now.hour // 3)
+        ]
+        moment = "{}，{} 点左右".format(part, now.hour)
+
+        cid = _load_ui().get("character") or None
+        text = ""
+        source = "static"
+        if chat_mod.is_enabled():
+            try:
+                got = await asyncio.to_thread(
+                    chat_mod.generate_idle, cid, list(_RECENT_READS), moment
+                )
+                text = str(got["text"])
+                source = "ai"
+            except Exception as exc:  # noqa: BLE001 - 生成失败不是错误
+                runtime.record("idle-say-failed", error=str(exc)[:120])
+        if not text:
+            picked = chat_mod.pick_line(cid, chat_mod.load_lines(cid)["lines"])
+            text = picked or _rnd.choice(_voice_lines(cid))
+            source = "pool" if picked else "static"
+
+        options = _synth_options({})
+        sentences = prepare_sentences(text, {}, settings.clean)
+        if not sentences:
+            return {"skipped": "empty_after_clean"}
+        voice = _avatar_voice(cid)
+        segment, used_fallback = await synthesize_sentence(
+            sentences[0],
+            voice,
+            options,
+            runtime.tts,
+            runtime.cache,
+            settings.fallback_voice,
+        )
+        runtime.record("idle-say", text=sentences[0], source=source, moment=moment)
+
+        # 可选：把自发说的这句**也存进点击池**（用户说"视情况"，所以给他开关）
+        if settings.idle_to_pool and source == "ai":
+            try:
+                chat_mod.merge_lines(cid, [sentences[0]])
+            except Exception:  # noqa: BLE001
+                pass
+
+        return {
+            "text": sentences[0],
+            "source": source,
+            "moment": moment,
+            "voice": voice,
+            "fell_back": bool(used_fallback),
+            "url": "/api/audio/{}".format(segment.audio_id),
+        }
+
+    @router.post("/idle/open")
+    async def idle_open() -> dict:
+        """打开用户自己写的「挂机额外要求」`idle_prompt.md`。"""
+
+        import subprocess as _sp
+        import sys as _sys
+
+        from nekopal import chat as chat_mod
+        from nekopal.bootstrap import ensure_user_workspace
+
+        ensure_user_workspace()  # 没有就先生成模板
+        path = chat_mod.idle_prompt_file()
+        try:
+            if _sys.platform == "darwin":
+                _sp.Popen(["open", "-t", str(path)])
+            else:
+                _sp.Popen(["xdg-open", str(path)])
+        except Exception as exc:  # noqa: BLE001
+            raise _invalid("打不开：{}".format(exc)) from None
+        return {"opened": str(path)}
 
     @router.post("/voice-check")
     async def voice_check() -> dict:
