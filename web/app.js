@@ -316,6 +316,14 @@ async function loadVoices() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
 
+    // 后端信息 —— 给分组起"人话"名字，并标出**离线 / 在线**。
+    // ⚠️ 顺便把一直没人调的 `/api/backends` 用上：它本来就该在这儿。
+    const backends = new Map();
+    try {
+      const bd = await (await fetch('/api/backends')).json();
+      for (const b of bd.backends || []) backends.set(b.id, b);
+    } catch (err) { /* 拿不到就退回用 id 当名字 */ }
+
     els.voice.innerHTML = '';
     const groups = new Map();
     for (const voice of data.voices || []) {
@@ -323,18 +331,41 @@ async function loadVoices() {
       groups.get(voice.backend).push(voice);
     }
 
-    for (const [backend, list] of groups) {
-      const group = document.createElement('optgroup');
-      group.label = backend;
-      for (const voice of list) {
-        const option = document.createElement('option');
-        option.value = voice.id;
-        option.textContent = voice.license === 'unofficial'
-          ? voice.name + ' ' + WARN
-          : voice.name;
-        if (voice.license === 'unofficial') option.title = '未授权来源：仅供个人使用，请自行确认合法性';
-        group.appendChild(option);
+    const mkOption = (voice) => {
+      const option = document.createElement('option');
+      option.value = voice.id;
+      option.textContent = voice.license === 'unofficial'
+        ? voice.name + ' ' + WARN
+        : voice.name;
+      if (voice.license === 'unofficial') {
+        option.title = '未授权来源：仅供个人使用，请自行确认合法性';
       }
+      return option;
+    };
+
+    // ① **变声音色（rvc）平铺在最上面、不进分组** ——
+    //    它们是"你自己准备的"，最该一眼看到。（用户要求：rvc 不变）
+    for (const voice of groups.get('rvc') || []) els.voice.append(mkOption(voice));
+
+    // ② 其余后端各收成一个**二级列表**（optgroup）。
+    //    顺序：**本地优先**（say 离线）→ 在线（edge / 其它）。
+    const rest = [...groups.keys()].filter((b) => b !== 'rvc');
+    rest.sort((a, b) => {
+      const wa = backends.get(a)?.offline ? 0 : 1;
+      const wb = backends.get(b)?.offline ? 0 : 1;
+      return wa - wb || a.localeCompare(b);
+    });
+    for (const backend of rest) {
+      const list = groups.get(backend);
+      if (!list || !list.length) continue;
+      const info = backends.get(backend);
+      const kind = info ? (info.offline ? '本地 · 离线可用' : '在线') : '';
+      const group = document.createElement('optgroup');
+      group.label =
+        (info?.name || backend) +
+        (kind ? '（' + kind + '）' : '') +
+        ' · ' + list.length + ' 个';
+      for (const voice of list) group.appendChild(mkOption(voice));
       els.voice.appendChild(group);
     }
 
