@@ -8,7 +8,9 @@
 </head>
 <body>
 
-<!-- ── 顶栏：只放「读的时候随时要碰」的东西 ─────────────────────────── -->
+<!-- ══ 顶栏：**永远常驻** ══════════════════════════════════════════════
+     为什么常驻：这里放的都是"边听边调"的东西（换音色、换语速、暂停 ✗）——
+     进了设置页也还能摸到，才能**边改边试听** ✗。 -->
 <header class="bar">
   <div class="brand">NekoPal<span class="sub">猫伴</span></div>
 
@@ -52,10 +54,13 @@
       <button id="playPause" class="primary" title="播放 / 暂停">▶</button>
       <button id="next" title="下一句">⏭</button>
     </div>
+
+    <!-- 设置：切主体（跟读 ⇄ 设置）。⌘, 同效 -->
+    <button id="settingsOpen" class="icon-btn" title="设置（⌘,）">⚙️</button>
   </div>
 </header>
 
-<!-- ── 输入区 ──────────────────────────────────────────────────── -->
+<!-- ══ 输入区：**也常驻**（在设置页里也能直接点「朗读」试听 ✗）════════ -->
 <section class="input-area">
   <textarea id="input" placeholder="把一整块文字粘进来（一条长回答 / 一段讲义 / 一篇文章），然后点「朗读」。"></textarea>
   <div class="input-actions">
@@ -72,25 +77,34 @@
 
 <div id="packWarn" class="pack-warn" hidden></div>
 
-<!-- ── 托盘：一个标签栏 + 四块面板 ────────────────────────────────── -->
-<!-- 为什么改成标签页：以前四个 `<details>` 一路堆下来，把跟读区挤得很矮，
-     而且「设置」压根没地方放。现在只有标签栏常驻，点哪个开哪个，再点收起。 -->
-<section class="tray" id="tray">
-  <nav class="tabs" role="tablist">
-    <button class="tab" role="tab" data-tab="settings" aria-selected="false">⚙️ 设置</button>
-    <button class="tab" role="tab" data-tab="export">💾 导出</button>
-    <button class="tab" role="tab" data-tab="chat">🤖 角色聊天</button>
-    <button class="tab" role="tab" data-tab="activity">📋 活动记录</button>
-    <span class="tabs-spacer"></span>
-    <button class="tab ghost" id="trayClose" title="收起">✕</button>
-  </nav>
+<!-- ══ 主体：跟读区 ⇄ 设置页（**互斥**，只换这一块）════════════════════ -->
+<main class="workspace">
 
-  <div class="panes">
+  <!-- ── 跟读区 ──────────────────────────────────────────────────── -->
+  <div id="reader" class="reader">
+    <p class="empty">还没有内容。<br>粘贴文字后点「朗读」——<b>文字会先出现，声音随后跟上</b>。<br><span class="dim">朗读时可以点任意一句，从那里开始读。</span></p>
+  </div>
 
-    <!-- ① 设置 -->
-    <div class="pane" id="pane-settings" data-pane="settings" role="tabpanel">
-      <div class="grid">
-        <label class="switch" for="setAutoRead">
+  <!-- ── 设置页 ──────────────────────────────────────────────────── -->
+  <section id="settingsPage" class="settings-page" hidden>
+    <header class="settings-bar">
+      <button id="settingsBack" class="ghost" title="返回跟读（Esc）">← 返回阅读</button>
+      <nav class="settings-tabs" id="settingsTabs" role="tablist">
+        <button class="stab" data-sec="read" aria-selected="true">📖 朗读</button>
+        <button class="stab" data-sec="sound">🔊 声音</button>
+        <button class="stab" data-sec="avatar">🐱 角色</button>
+        <button class="stab" data-sec="ai">🤖 AI</button>
+        <button class="stab" data-sec="store">💾 存储</button>
+      </nav>
+      <input type="search" id="settingsSearch" class="settings-search"
+             placeholder="搜设置…" autocomplete="off">
+    </header>
+
+    <div class="settings-body" id="settingsBody">
+
+      <!-- ══ 📖 朗读 ══ -->
+      <section class="scard" data-sec="read">
+        <h3>📖 朗读</h3>        <label class="switch" for="setAutoRead">
           <input type="checkbox" id="setAutoRead">
           <span class="knob" aria-hidden="true"></span>
           <span class="sw-text">
@@ -108,50 +122,53 @@
           </span>
         </label>
 
-        <label class="field"><span>自动滚动</span>
+        <label class="row"><span class="row-label">自动滚动</span>
           <select id="setScroll">
             <option value="center">居中跟随</option>
             <option value="off">不滚动</option>
           </select>
         </label>
 
-        <label class="field"><span>音高（半音）</span>
+        <label class="row"><span class="row-label">预取句数</span>
+          <input type="number" id="setPrefetch" min="0" max="10" step="1">
+          <span class="row-hint">播第 N 句时先把后面几句合成好，掩盖延迟</span>
+        </label>
+
+        <p class="note">⏳ 读前清洗规则（跳过代码块 / 表格、<code>→</code> 读「箭头」…）会放在这一组，还没做。</p>
+      </section>
+
+      <!-- ══ 🔊 声音 ══ -->
+      <section class="scard" data-sec="sound" hidden>
+        <h3>🔊 声音</h3>
+
+        <p class="note">
+          <b>音色与语速在顶栏</b> —— 进设置页也不会消失，可以边改边点「朗读」试听。
+        </p>
+
+        <label class="row"><span class="row-label">音高（半音）</span>
           <input type="number" id="setPitch" min="-12" max="12" step="1"
                  title="变调半音数；正数更高。改完会重新合成（缓存自动失效）">
+          <span class="row-hint">只对变声后端（RVC）有效；改完旧音频会重新合成</span>
         </label>
 
-        <label class="field"><span>预取句数</span>
-          <input type="number" id="setPrefetch" min="0" max="10" step="1">
-        </label>
+        <p class="note">⏳ 变声服务状态灯 + 启动按钮会放在这一组，还没做。</p>
+      </section>
 
-        <label class="field"><span>缓存上限 (MB)</span>
-          <input type="number" id="setCacheMb" min="50" max="10000" step="50">
-        </label>
+      <!-- ══ 🐱 角色 ══ -->
+      <section class="scard" data-sec="avatar" hidden>
+        <h3>🐱 角色</h3>
 
-        <label class="field wide">
-          <span>音频缓存</span>
-          <span class="dim" id="cacheInfo">…</span>
-          <button id="cacheClear" class="ghost">清空缓存</button>
-          <button id="settingsRefresh" class="ghost">刷新</button>
-        </label>
-      </div>
+        <p class="note">
+          <b>形象 / 角色 / 换装</b>在顶栏；<b>动作 / 表情 / 窗口大小</b>在角色身上点右键 ——
+          那几样要看着角色调，所以留在角色窗里更顺手。
+        </p>
 
-      <div class="grid gap-top">
         <label class="switch" for="setPawCursor">
           <input type="checkbox" id="setPawCursor">
           <span class="knob" aria-hidden="true"></span>
           <span class="sw-text">
             <b>🐾 猫爪光标</b>
             <em>鼠标移到角色身上时，指针变成一只小猫爪。</em>
-          </span>
-        </label>
-
-        <label class="switch" for="setFx">
-          <input type="checkbox" id="setFx">
-          <span class="knob" aria-hidden="true"></span>
-          <span class="sw-text">
-            <b>✨ 点击粒子特效</b>
-            <em>在她身上点一下，散开一簇粉色小光点（还带两只小爪子）。</em>
           </span>
         </label>
 
@@ -163,22 +180,103 @@
             <em>她的眼睛和头会轻轻看向你的光标（动作照常，只是"瞟一眼"）。</em>
           </span>
         </label>
-      </div>
-      <p class="note">
-        设置存在 <code>~/.config/nekopal/ui.json</code>，重开 App 也还在。
-      </p>
-    </div>
 
-    <!-- ② 导出 -->
-    <div class="pane" id="pane-export" data-pane="export" role="tabpanel" hidden>
-      <div class="grid">
-        <label class="field"><span>导出内容</span>
+        <label class="switch" for="setFx">
+          <input type="checkbox" id="setFx">
+          <span class="knob" aria-hidden="true"></span>
+          <span class="sw-text">
+            <b>✨ 点击粒子特效</b>
+            <em>在她身上点一下，散开一簇粉色小光点（还带两只小爪子）。</em>
+          </span>
+        </label>
+      </section>
+
+      <!-- ══ 🤖 AI ══ -->
+      <section class="scard" data-sec="ai" hidden>
+        <h3>🤖 AI（让角色自己说话）</h3>
+
+        <div class="lines-box">
+          <div class="lines-head">
+            <b>🎬 预生成台词</b>
+            <span class="dim" id="linesMeta">…</span>
+          </div>
+          <p class="note">
+            一次让模型写几十句<b>存着</b>，点角色时<b>直接从里面抽</b> —— 瞬间出声，不用等它想。
+            生成完这里会列出来，<b>可以直接改文字、也可以删掉不喜欢的句子</b>（比如叹气太多的）。
+          </p>
+          <div class="lines-want">
+            <label class="field wide">
+              <span>一句话需求</span>
+              <input type="text" id="linesWant"
+                placeholder="这次想要什么样的？（例：多一点跟找工作有关的；别太丧；短一点）">
+            </label>
+          </div>
+          <p class="note" id="linesRecipe">…</p>
+          <div class="lines-actions">
+            <label class="field"><span>条数</span>
+              <input type="number" id="linesCount" min="5" max="80" step="5" value="30">
+            </label>
+            <label class="field"><span>点击时说</span>
+              <select id="lineSource">
+                <option value="pool">从台词池里抽（快）</option>
+                <option value="live">每次现编（慢，但更应景）</option>
+              </select>
+            </label>
+            <button id="linesGen" class="primary" title="在现有台词后面追加，旧的不会丢">
+              ➕ 再生成一批
+            </button>
+            <button id="linesGenReplace" class="ghost" title="清掉现有的、整份重新生成">覆盖重来</button>
+            <button id="linesOpen" class="ghost" title="打开台词文件（⌘/Ctrl + Shift + L）">
+              打开文件 <kbd>⌘⇧L</kbd>
+            </button>
+            <button id="linesClear" class="ghost">清空</button>
+            <span class="dim" id="linesStatus"></span>
+          </div>
+          <div class="lines-list" id="linesList">
+            <div class="act-empty">（加载中…）</div>
+          </div>
+        </div>
+
+        <div id="chatBody" class="activity-list">
+          <div class="act-empty">（展开后加载）</div>
+        </div>
+        <div class="pane-actions">
+          <button id="chatOpen" class="ghost">打开配置文件夹</button>
+          <button id="chatRefresh" class="ghost">刷新</button>
+        </div>
+
+        <h3 class="sub">📋 活动记录</h3>
+        <div id="activityList" class="activity-list"><div class="act-empty">（展开后加载）</div></div>
+        <div class="pane-actions">
+          <button id="activityRefresh" class="ghost">刷新</button>
+        </div>
+      </section>
+
+      <!-- ══ 💾 存储 ══ -->
+      <section class="scard" data-sec="store" hidden>
+        <h3>💾 存储</h3>
+
+        <label class="row"><span class="row-label">音频缓存上限</span>
+          <input type="number" id="setCacheMb" min="50" max="10000" step="50">
+          <span class="row-hint">MB。超过就按最旧的先删</span>
+        </label>
+
+        <div class="row">
+          <span class="row-label">当前占用</span>
+          <span class="dim" id="cacheInfo">…</span>
+          <button id="cacheClear" class="ghost">清空缓存</button>
+          <button id="settingsRefresh" class="ghost">刷新</button>
+        </div>
+
+        <hr class="card-sep">
+
+        <label class="row"><span class="row-label">导出内容</span>
           <select id="expWhat">
             <option value="task">当前这次朗读（用缓存，最快）</option>
             <option value="text">上面输入框里的文字（现场合成）</option>
           </select>
         </label>
-        <label class="field"><span>格式</span>
+        <label class="row"><span class="row-label">格式</span>
           <select id="expFormat">
             <option value="wav">wav</option>
             <option value="m4a" selected>m4a</option>
@@ -186,89 +284,29 @@
             <option value="mp3">mp3（需要 ffmpeg）</option>
           </select>
         </label>
-        <label class="field"><span>句间停顿 (秒)</span>
+        <label class="row"><span class="row-label">句间停顿（秒）</span>
           <input type="number" id="expGap" min="0" max="3" step="0.05" value="0.15">
         </label>
-        <label class="field"><span>文件名</span>
+        <label class="row"><span class="row-label">文件名</span>
           <input type="text" id="expName" placeholder="nekopal-export">
         </label>
-        <div class="field wide">
+        <div class="row">
           <button id="expGo" class="primary">开始导出</button>
           <span class="dim" id="expStatus"></span>
         </div>
-      </div>
-      <p class="note">
-        导出的文件落在 <code id="expDir">~/.cache/nekopal/…</code>（可在配置里改）。
-      </p>
-    </div>
-
-    <!-- ③ 角色聊天 + 预生成台词池 -->
-    <div class="pane" id="chatPanel" data-pane="chat" role="tabpanel" hidden>
-      <div class="lines-box">
-        <div class="lines-head">
-          <b>🎬 预生成台词</b>
-          <span class="dim" id="linesMeta">…</span>
-        </div>
         <p class="note">
-          一次让模型写几十句<b>存着</b>，点角色时<b>直接从里面抽</b> —— 瞬间出声，不用等它想。
-          生成完这里会列出来，<b>可以直接改文字、也可以删掉不喜欢的句子</b>（比如叹气太多的）。
+          导出的文件落在 <code id="expDir">~/.cache/nekopal/…</code>
         </p>
-        <div class="lines-want">
-          <label class="field wide">
-            <span>一句话需求</span>
-            <input type="text" id="linesWant"
-              placeholder="这次想要什么样的？（例：多一点跟找工作有关的；别太丧；短一点）">
-          </label>
-        </div>
-        <p class="note" id="linesRecipe">…</p>
-        <div class="lines-actions">
-          <label class="field"><span>条数</span>
-            <input type="number" id="linesCount" min="5" max="80" step="5" value="30">
-          </label>
-          <label class="field"><span>点击时说</span>
-            <select id="lineSource">
-              <option value="pool">从台词池里抽（快）</option>
-              <option value="live">每次现编（慢，但更应景）</option>
-            </select>
-          </label>
-          <button id="linesGen" class="primary" title="在现有台词后面**追加**，旧的不会丢">
-            ➕ 再生成一批
-          </button>
-          <button id="linesGenReplace" class="ghost" title="清掉现有的、整份重新生成">覆盖重来</button>
-          <button id="linesOpen" class="ghost" title="打开台词文件（⌘/Ctrl + Shift + L）">
-            打开文件 <kbd>⌘⇧L</kbd>
-          </button>
-          <button id="linesClear" class="ghost">清空</button>
-          <span class="dim" id="linesStatus"></span>
-        </div>
-        <div class="lines-list" id="linesList">
-          <div class="act-empty">（加载中…）</div>
-        </div>
-      </div>
 
-      <div id="chatBody" class="activity-list">
-        <div class="act-empty">（展开后加载）</div>
-      </div>
-      <div class="pane-actions">
-        <button id="chatOpen" class="ghost">打开配置文件夹</button>
-        <button id="chatRefresh" class="ghost">刷新</button>
-      </div>
+        <p class="note">
+          界面偏好存在 <code>~/.config/nekopal/ui.json</code>，重开 App 也还在。
+        </p>
+      </section>
+
+      <p class="settings-empty" id="settingsEmpty" hidden>没有匹配的设置项</p>
     </div>
+  </section>
 
-    <!-- ④ 活动记录 -->
-    <div class="pane" id="activityPanel" data-pane="activity" role="tabpanel" hidden>
-      <div id="activityList" class="activity-list"><div class="act-empty">（展开后加载）</div></div>
-      <div class="pane-actions">
-        <button id="activityRefresh" class="ghost">刷新</button>
-      </div>
-    </div>
-
-  </div>
-</section>
-
-<!-- ── 跟读区 ──────────────────────────────────────────────────── -->
-<main id="reader" class="reader">
-  <p class="empty">还没有内容。<br>粘贴文字后点「朗读」——<b>文字会先出现，声音随后跟上</b>。<br><span class="dim">朗读时可以点任意一句，从那里开始读。</span></p>
 </main>
 
 <audio id="audio" preload="auto"></audio>

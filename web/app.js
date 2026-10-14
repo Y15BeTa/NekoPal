@@ -18,7 +18,6 @@ const els = {
   soundGate: $('soundGate'),
   soundGateBtn: $('soundGateBtn'),
   packWarn: $('packWarn'),
-  tray: $('tray'),
   activityList: $('activityList'),
   activityRefresh: $('activityRefresh'),
 };
@@ -773,43 +772,108 @@ if (els.activityRefresh) {
   els.activityRefresh.addEventListener('click', loadActivity);
 }
 
-// ── 托盘：标签页切换 ──────────────────────────────────────────────────
-// 点标签 → 打开那一块（再点同一个 → 收起）；打开时才去拉数据，省得白跑。
-function initTray() {
-  const tray = document.getElementById('tray');
-  if (!tray) return;
-  const tabs = Array.from(tray.querySelectorAll('.tab[data-tab]'));
-  const panes = Array.from(tray.querySelectorAll('[data-pane]'));
-  const closeBtn = document.getElementById('trayClose');
+// ── 设置页 ⇄ 跟读区 ────────────────────────────────────────────────────
+// 设计：**顶栏和输入区不动**，只切换主体 —— 所以进了设置页也能
+// 边改音色 / 语速、边点「朗读」试听。这是"独立设置窗口"做不到的
+// （那个会把主窗和角色一起挡住）。
+function initSettingsPage() {
+  const page = document.getElementById('settingsPage');
+  const openBtn = document.getElementById('settingsOpen');
+  const backBtn = document.getElementById('settingsBack');
+  const tabs = Array.from(document.querySelectorAll('#settingsTabs .stab'));
+  const cards = Array.from(document.querySelectorAll('#settingsBody .scard'));
+  const search = document.getElementById('settingsSearch');
+  const empty = document.getElementById('settingsEmpty');
+  if (!page) return;
 
-  function openTab(name) {
-    const already = tray.dataset.active === name;
-    if (already) {
-      tray.classList.remove('open');
-      tray.dataset.active = '';
-      tabs.forEach((t) => t.setAttribute('aria-selected', 'false'));
-      return;
+  let current = 'read';
+
+  /** 搜索过滤之后，把被藏起来的行还原。 */
+  function resetFilter() {
+    for (const card of cards) {
+      card.hidden = false;
+      for (const el of card.children) el.hidden = false;
+      for (const el of card.querySelectorAll('.switch, .row')) el.hidden = false;
+      for (const el of card.querySelectorAll('.note, .lines-box, .activity-list, .pane-actions, hr')) {
+        el.hidden = false;
+      }
     }
-    tray.dataset.active = name;
-    tray.classList.add('open');
-    tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
-    panes.forEach((p) => { p.hidden = p.dataset.pane !== name; });
-    // 打开那一刻加载（活动记录 / 聊天状态都要现拉）
-    if (name === 'activity') loadActivity();
-    if (name === 'chat') { loadChatStatus(); loadLines(); }
-    if (name === 'settings') loadSettings();
-    if (name === 'export') refreshCacheInfo();
+    if (empty) empty.hidden = true;
   }
 
-  tabs.forEach((t) => t.addEventListener('click', () => openTab(t.dataset.tab)));
-  closeBtn?.addEventListener('click', () => {
-    tray.classList.remove('open');
-    tray.dataset.active = '';
-    tabs.forEach((t) => t.setAttribute('aria-selected', 'false'));
+  function show(sec) {
+    current = sec;
+    resetFilter();
+    tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.sec === sec)));
+    cards.forEach((c) => { c.hidden = c.dataset.sec !== sec; });
+    if (search) search.value = '';
+    // 进组时顺手刷新（跟以前托盘一样，省得白跑）
+    if (sec === 'ai') { loadChatStatus(); loadLines(); loadActivity(); }
+    if (sec === 'store') refreshCacheInfo();
+    if (sec === 'read' || sec === 'sound' || sec === 'avatar') loadSettings();
+  }
+
+  function open(sec) {
+    page.hidden = false;
+    if (els.reader) els.reader.hidden = true;
+    openBtn?.setAttribute('aria-pressed', 'true');
+    show(sec || current);
+  }
+
+  function close() {
+    page.hidden = true;
+    if (els.reader) els.reader.hidden = false;
+    openBtn?.setAttribute('aria-pressed', 'false');
+  }
+
+  tabs.forEach((t) => t.addEventListener('click', () => show(t.dataset.sec)));
+  openBtn?.addEventListener('click', () => (page.hidden ? open() : close()));
+  backBtn?.addEventListener('click', close);
+
+  // ⌘, 开关设置（macOS 惯例）；Esc 返回跟读
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+      e.preventDefault();
+      if (page.hidden) open(); else close();
+      return;
+    }
+    if (e.key !== 'Escape' || page.hidden) return;
+    // 音色弹层自己会用 Esc 关自己 —— 别抢它
+    const pop = document.getElementById('vselPop');
+    if (pop && !pop.hidden) return;
+    close();
   });
+
+  /** 搜设置：按「整行文字」过滤；没有命中的卡片整张藏起来。 */
+  search?.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    resetFilter();
+    if (!q) {
+      show(current);
+      return;
+    }
+    let any = false;
+    for (const card of cards) {
+      // 搜索时把非设置行（说明 / 按钮组）先收起来，免得结果里混着大段文字
+      for (const el of card.querySelectorAll('.note, .lines-box, .activity-list, .pane-actions, hr, h3')) {
+        el.hidden = true;
+      }
+      let hit = false;
+      for (const el of card.querySelectorAll('.switch, .row')) {
+        const ok = el.textContent.toLowerCase().includes(q);
+        el.hidden = !ok;
+        if (ok) hit = true;
+      }
+      card.hidden = !hit;
+      if (hit) any = true;
+    }
+    if (empty) empty.hidden = any;
+  });
+
+  show('read'); // 默认停在「📖 朗读」
 }
 
-initTray();
+initSettingsPage();
 
 
 // ── 人物形象：开关 + 角色下拉 + 换装下拉（两个窗口共享）────────────────
