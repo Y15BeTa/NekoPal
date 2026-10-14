@@ -621,12 +621,43 @@ def run(
         原生每 80ms 已经算好了，直接拿来用 ✅
         """
 
-        def _apply(self):
+        def _inside_from_event(self, event):
+            """用**事件自己的坐标**判断在不在她身上。
+
+            ⚠️ 为什么不能只用 `paw["inside"]`（那个每 80ms 才更新一次）✗：
+            真实触控板的移动比轮询密得多 ✗ —— 快划过去时，
+            80ms 前的旧值还停在"在外面"✗，于是每次 `mouseMoved` 都把光标
+            **设回箭头** ✗，跟主循环里的"设成猫爪"来回打架 →
+            观感上就是"猫爪时有时无，甚至一直没有" ✗。
+            事件里带着当下的坐标，用它判断才是准的 ✅。
+            """
+
+            try:
+                if event is None:
+                    return bool(paw.get("inside"))
+                loc = event.locationInWindow()  # NSView 坐标（**左下**原点 ✗）
+                h_view = float(view.bounds().size.height)
+                x = float(loc.x)
+                y_top = h_view - float(loc.y)  # 翻成"左上原点"，和网页报的一致
+                slack = 6.0
+                for r in bridge._hot_rects or []:
+                    if (
+                        r["x"] - slack <= x <= r["x"] + r["w"] + slack
+                        and r["y"] - slack <= y_top <= r["y"] + r["h"] + slack
+                    ):
+                        return True
+                return False
+            except Exception:  # noqa: BLE001 - 拿不到就用主循环的旧值
+                return bool(paw.get("inside"))
+
+        def _apply(self, event=None):
             try:
                 from AppKit import NSCursor
 
                 want_paw = bool(
-                    paw.get("inside") and paw["cursor"] is not None and _paw_wanted()
+                    self._inside_from_event(event)
+                    and paw["cursor"] is not None
+                    and _paw_wanted()
                 )
                 was = paw.get("applied")
                 if want_paw:
@@ -646,14 +677,14 @@ def run(
                     paw["apply_err"] = True
                     print("置顶小条：设光标出错（{}）".format(exc), flush=True)
 
-        def cursorUpdate_(self, _event):  # noqa: N802
-            self._apply()
+        def cursorUpdate_(self, event):  # noqa: N802
+            self._apply(event)
 
-        def mouseMoved_(self, _event):  # noqa: N802
-            self._apply()
+        def mouseMoved_(self, event):  # noqa: N802
+            self._apply(event)
 
-        def mouseExited_(self, _event):  # noqa: N802
-            self._apply()
+        def mouseExited_(self, event):  # noqa: N802
+            self._apply(event)
 
     # ⚠️ 必须留引用：跟踪区域的 owner 是**弱引用**，被 GC 掉就再也不回调了
     paw["delegate"] = _PawCursorOwner.alloc().init()
