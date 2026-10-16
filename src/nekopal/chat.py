@@ -616,14 +616,32 @@ def _drop_legacy_lines(character_id: Optional[str]) -> None:
         pass
 
 
+#: 上一次读 `lines.yaml` 时的**解析错误**（None = 正常 ✗）。
+#:
+#: ⚠️ 为什么需要它：2026-10-17 那个文件被写坏过 ✗（`lines` 丢了一个冒号 ✗）→
+#: YAML 解析失败 ✗ → 而这里**静默吞掉异常、当成空池子** ✗ →
+#: 界面上表现成"**台词池凭空消失**"✗（用户只会觉得"我存的台词没了"✗）。
+#: **文件坏了是个错误状态** ✗ 不该和"还没生成过"长得一模一样 ✗ ——
+#: 所以把错误记下来，让 `/api/lines` 能报出去 ✅。
+_LAST_POOL_ERROR: Optional[str] = None
+
+
 def _read_pool_file() -> Dict[str, Any]:
+    global _LAST_POOL_ERROR
     try:
         import yaml
 
         data = yaml.safe_load(lines_file().read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
+    except FileNotFoundError:
+        _LAST_POOL_ERROR = None  # 还没建过 = 正常 ✗ 不是错 ✗
         return {}
+    except Exception as exc:  # noqa: BLE001
+        # ⚠️ 文件**存在但读不动** ✗ —— 这才是要报警的那种 ✗
+        _LAST_POOL_ERROR = "{}: {}".format(type(exc).__name__, exc)
+        return {}
+    _LAST_POOL_ERROR = None
     if not isinstance(data, dict):
+        _LAST_POOL_ERROR = "顶层不是字典（{}）".format(type(data).__name__)
         return {}
     chars = data.get("characters")
     return chars if isinstance(chars, dict) else {}
@@ -632,8 +650,9 @@ def _read_pool_file() -> Dict[str, Any]:
 def _write_pool_file(chars: Dict[str, Any]) -> None:
     import yaml
 
+    from nekopal.fileutil import write_text_atomic
+
     path = lines_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
     body = (
         "# NekoPal 预生成台词池\n"
         "#\n"
@@ -645,11 +664,10 @@ def _write_pool_file(chars: Dict[str, Any]) -> None:
         "\n"
         + yaml.safe_dump({"characters": chars}, allow_unicode=True, sort_keys=False)
     )
-    path.write_text(body, encoding="utf-8")
-    try:
-        path.chmod(0o600)  # 里面是私人语境衍生物 ✗ —— 只给本人读写
-    except Exception:  # noqa: BLE001
-        pass
+    # ⚠️ **必须原子写** ✗ —— 以前是 `path.write_text()` ✗（open 截断 → write ✗ 无保护 ✗）
+    # 2026-10-17 就因此丢掉过一个冒号 ✗ → YAML 解析失败 ✗ → 而 `load_lines` 把异常
+    # 当成"空池子"吞掉 ✗ → 界面上表现成"**台词池凭空消失**"✗（静默数据丢失 ✗）。
+    write_text_atomic(path, body, mode=0o600)  # 里面是私人语境衍生物 ✗ 只给本人读写
 
 
 def _migrate_legacy(character_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -932,6 +950,12 @@ def lines_status(character_id: Optional[str]) -> Dict[str, Any]:
     data["remaining"] = len(_BAGS.get(str(character_id or ""), []))
     data["default_batch"] = DEFAULT_BATCH
     data["max_batch"] = MAX_BATCH
+    # ⚠️ 台词池文件**坏了**要和"还没生成过"分得开 ✗（2026-10-17 踩过 ✗）：
+    #    那次文件被写坏 ✗ 界面上就是"池子凭空消失"✗ 让人以为是程序吃掉了 ✗。
+    _read_pool_file()  # 顺便刷新一下错误状态 ✗
+    if _LAST_POOL_ERROR:
+        data["broken"] = _LAST_POOL_ERROR
+        data["broken_file"] = str(lines_file())
     return data
 
 

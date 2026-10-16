@@ -95,9 +95,13 @@ def _save_ui(data: dict) -> dict:
     merged = _load_ui()
     merged.update({k: v for k, v in (data or {}).items() if k in merged})
     try:
-        _ui_file().parent.mkdir(parents=True, exist_ok=True)
-        _ui_file().write_text(
-            json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
+        # ⚠️ 原子写 ✗ —— 和 `lines.yaml` 一样踩过：`write_text()` 是
+        # open(截断) → write ✗ 没有保护 ✗ 打断/两个写者撞上就留半截文件 ✗。
+        # 见 `nekopal.fileutil` 的说明。
+        from nekopal.fileutil import write_text_atomic
+
+        write_text_atomic(
+            _ui_file(), json.dumps(merged, ensure_ascii=False, indent=2) + "\n"
         )
     except Exception:  # noqa: BLE001 - 写不进去也不该让请求失败
         pass
