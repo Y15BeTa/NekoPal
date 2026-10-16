@@ -1034,13 +1034,26 @@ function idleReschedule() {
   idleTimer = setTimeout(idleTick, ms);
 }
 
+//: 「刚点过她」之后至少要安静多久才允许她主动开口。
+//: ⚠️ 这个**不能**用 idleMin（8 分钟）—— 那等于要求"你 8 分钟内一次都别点她"，
+//:    而实测用户两天点了 179 次（约每 16 分钟一次）→ **几乎每轮都被跳过** ✗，
+//:    所以线上两天只说了一句 ✗。
+//:    "别在你刚点完就插话"其实 **90 秒**就够了 ✗。
+const IDLE_QUIET_MS = 90 * 1000;
+
 async function idleTick() {
   clearTimeout(idleTimer);
-  const quietMin = idleMin * 60 * 1000;
-  // 有人刚碰过她 → 说明人在，重新计时就好
-  if (Date.now() - lastTouch < quietMin) return idleReschedule();
+  // 刚点过她（90 秒内）→ 让人家安静一会儿再考虑开口
+  const sinceTouch = Date.now() - lastTouch;
+  if (sinceTouch < IDLE_QUIET_MS) {
+    log('挂机：你刚点过她（' + Math.round(sinceTouch / 1000) + ' 秒前）→ 这轮先不开口');
+    return idleReschedule();
+  }
   // 已经在说话 → 这轮跳过
-  if (voiceEl && !voiceEl.paused) return idleReschedule();
+  if (voiceEl && !voiceEl.paused) {
+    log('挂机：已经有话在播 → 这轮跳过');
+    return idleReschedule();
+  }
 
   try {
     const res = await fetch('/api/idle/say', { method: 'POST' });
