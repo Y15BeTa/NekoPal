@@ -555,7 +555,20 @@ async function loadVoices() {
 
     const all = data.voices || [];
     const prefs = loadPrefs();
-    const preferred = all.find((v) => v.id === prefs.voice)      // 上次选的
+
+    // ⚠️ R26：音色是**按角色记**的 ✗ 所以"现在该用哪个"必须**先问后端** ✗ ——
+    //    后端已经按三级优先级解析好了（你为这个角色选的 → 角色包默认 → 旧全局 → 默认 ✗）。
+    //    以前这里以 `localStorage` 为准 ✗ 而且开窗就 `syncVoiceToServer` 回写一次 ✗
+    //    → **把角色的记忆覆盖成本地的旧值** ✗
+    //    （踩过：切到野乃花，重开 App 又变回要楽奈的音色 ✗）。
+    let serverVoice = '';
+    try {
+      const info = await (await fetch('/api/avatar', { cache: 'no-store' })).json();
+      serverVoice = info.active_voice || '';
+    } catch (err) { /* 拿不到就退回 localStorage */ }
+
+    const preferred = all.find((v) => v.id === serverVoice)        // ① 后端说了算
+      || all.find((v) => v.id === prefs.voice)                      // ② 才轮到"上次选的"
       || all.find((v) => v.id === data.default)
       || all.find((v) => v.backend === 'say' && (v.lang || []).includes('zh'))
       || all.find((v) => v.backend === 'say')
@@ -569,7 +582,9 @@ async function loadVoices() {
 
     // 关键：把当前音色同步给服务端 —— 否则「opencode 自动推送」的任务
     // 会用服务端默认音色（晓晓），而不是你在这里选的（踩过这个 bug）。
-    if (preferred) syncVoiceToServer(preferred.id);
+    // ⚠️ 但**只在和后端不一致时**才回写 ✗ —— 开窗时无脑 PUT 一次，会把
+    //    角色记住的音色覆盖成本地旧值（就是上面说的那个 bug ✗）。
+    if (preferred && serverVoice !== preferred.id) syncVoiceToServer(preferred.id);
 
     renderPackProblems(data.pack_problems || []);
     setStatus('就绪 · ' + all.length + ' 个音色');
