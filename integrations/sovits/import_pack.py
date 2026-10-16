@@ -203,8 +203,13 @@ sovits:
 {weight_note}  ref_audio: ref.wav
   # 参考音频的**逐字文本**：换掉 ref.wav 就要一起改这一行
   prompt_text: {prompt_text}
+  # 参考音频是**日语** —— 这个别改（它决定"像不像"）
   prompt_lang: {prompt_lang}
-  text_lang: {prompt_lang}
+  # ⚠️ 要合成的**文本**语言：`auto` = 自动识别 ✗ **不要**跟着 prompt_lang 走 ✗
+  #    踩着过：写成 all_ja 时，NekoPal 里的**中文文本会被用日语发音读出来** ✗
+  #    （同一句中文：all_ja 出来 80KB ✗ zh/auto 是 198KB ✗ 完全两样 ✗）
+  #    GPT-SoVITS 支持**跨语言**：日语参考 + 中文文本 → 她的音色说中文 ✅
+  text_lang: auto
 """.format(
         pack_id=_quoted(pack_id),
         name=_quoted("夢限大·{}".format(name)),
