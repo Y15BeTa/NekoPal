@@ -82,3 +82,21 @@ def _sample(key: str):
         "outfit": "some-outfit",
         "voice": "rvc:rana",
     }.get(key, 3)
+
+
+def test_per_character_voices_round_trip(monkeypatch, tmp_path):
+    """R26：`voices`（每个角色各自的音色）必须存得住。
+
+    ⚠️ 它走的是**另一条写入路径** —— `PUT /api/settings` 里那个 `default_voice` 分支 ✗，
+    不在上面那个 `for k in (...)` 清单里 ✗。所以上面那条"清单完整性"测试
+    **管不到它** ✗ —— 这里单独钉一条。
+    """
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    routes._save_ui({"voices": {"rana": "rvc:rana", "yuki": "edge:zh-CN-XiaoyiNeural"}})
+
+    assert routes._load_ui()["voices"] == {
+        "rana": "rvc:rana",
+        "yuki": "edge:zh-CN-XiaoyiNeural",
+    }

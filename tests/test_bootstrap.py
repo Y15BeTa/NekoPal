@@ -73,3 +73,59 @@ def test_idempotent(fresh):
     bootstrap.ensure_user_workspace()
     again = bootstrap.ensure_user_workspace()
     assert again["created"] == []
+
+
+# ── R26：音色从"全局一个值"改成"每个角色一个值"时的一次性迁移 ──────────────
+#
+# **为什么必须做**：改完之后，角色包里那句 `voice: rana` 会**第一次真的生效**
+# （以前它一直被全局值盖着 ✗）。如果角色包声明的和用户选的不一样 ✗
+# —— 用户明明选过的音色就会被**悄悄改掉** ✗。
+# ⇒ 升级时先把旧值记到"当前角色"名下 ✅。
+
+
+def _write_ui(fresh, data):
+    import json
+
+    (fresh / "ui.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def _read_ui(fresh):
+    import json
+
+    return json.loads((fresh / "ui.json").read_text(encoding="utf-8"))
+
+
+def test_migrates_legacy_global_voice_onto_the_current_character(fresh):
+    bootstrap.ensure_user_workspace()
+    _write_ui(fresh, {"voice": "rvc:rana", "character": "rana", "pitch": 2.0})
+
+    out = bootstrap.ensure_user_workspace()
+
+    assert out["migrated"] == "rvc:rana → voices[rana]"
+    assert _read_ui(fresh)["voices"] == {"rana": "rvc:rana"}
+    # ⚠️ 别的键**一个都不许丢**（"只创建、绝不覆盖"那条红线）
+    assert _read_ui(fresh)["voice"] == "rvc:rana"
+    assert _read_ui(fresh)["pitch"] == 2.0
+
+
+def test_migration_never_overwrites_a_choice_the_user_made_later(fresh):
+    bootstrap.ensure_user_workspace()
+    _write_ui(
+        fresh,
+        {"voice": "rvc:rana", "character": "rana", "voices": {"rana": "edge:zh-CN-XiaoyiNeural"}},
+    )
+
+    out = bootstrap.ensure_user_workspace()
+
+    assert out["migrated"] is None
+    assert _read_ui(fresh)["voices"] == {"rana": "edge:zh-CN-XiaoyiNeural"}
+
+
+def test_no_migration_without_a_current_character(fresh):
+    """没有"当前角色"就不知道该记到谁名下 ✗ —— 那就什么都别做。"""
+
+    bootstrap.ensure_user_workspace()
+    _write_ui(fresh, {"voice": "rvc:rana"})
+
+    assert bootstrap.ensure_user_workspace()["migrated"] is None
+    assert "voices" not in _read_ui(fresh)

@@ -25,9 +25,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-__all__ = ["ensure_user_workspace", "CHAT_TEMPLATE", "PROFILE_TEMPLATE", "README_TEXT"]
+__all__ = [
+    "ensure_user_workspace",
+    "CHAT_TEMPLATE",
+    "PROFILE_TEMPLATE",
+    "README_TEXT",
+]
 
 
 CHAT_TEMPLATE = """# NekoPal 的「角色聊天」配置（让角色按性格自己说话）
@@ -157,6 +163,8 @@ def ensure_user_workspace() -> Dict[str, Any]:
         except Exception:  # noqa: BLE001
             pass
 
+    migrated = _migrate_ui_voices(root)
+
     # 这些是**需要用户自己放**的（有版权，程序不分发）
     missing = [
         name
@@ -164,4 +172,46 @@ def ensure_user_workspace() -> Dict[str, Any]:
         if not (root / name).exists()
     ]
 
-    return {"dir": str(root), "created": created, "missing": missing}
+    return {"dir": str(root), "created": created, "missing": missing, "migrated": migrated}
+
+
+def _migrate_ui_voices(root: Path) -> Optional[str]:
+    """把旧的**全局音色**落到"当前这个角色"名下（R26 · 一次性迁移）。
+
+    **为什么必须做**：音色从"全局一个值"改成"每个角色一个值"之后 ✗，
+    角色包里那句 `voice: rana` 会**第一次真的生效**（以前它一直被全局值盖着 ✗）。
+    如果角色包声明的是另一个音色 ✗，用户明明选过的就会被**悄悄改掉** ✗。
+
+    ⇒ 升级时**先把旧值记到当前角色名下** ✅ —— 用户的明确选择永远优先 ✗。
+
+    ⚠️ 只做三件事：读、加一个键、写回。**不删任何键** ✗。
+       已经迁移过（`voices` 里已有当前角色）就原样返回 ✗。
+    """
+
+    path = root / "ui.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - 读不动就别动它
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    legacy = str(data.get("voice") or "").strip()
+    character = str(data.get("character") or "").strip()
+    voices = data.get("voices")
+    if not isinstance(voices, dict):
+        voices = {}
+    if not legacy or not character or voices.get(character):
+        return None
+
+    voices[character] = legacy
+    data["voices"] = voices
+    try:
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    return "{} → voices[{}]".format(legacy, character)

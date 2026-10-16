@@ -49,6 +49,12 @@ def _load_ui() -> dict:
         "character": None,
         "outfit": None,
         "voice": None,
+        #: 🗣️ **每个角色各自记住的音色**（R26 · 方案 C）—— `{角色 id: 音色 id}`。
+        #: 以前只有一个全局的 `voice` ✗，于是给几个角色各配了音色之后，
+        #: 切角色**不会**跟着换 ✗，得手动去下拉里改 ✗。
+        #: ⚠️ **必须在 defaults 里** ✗ —— `_save_ui` 只保留这里认识的键，
+        #:    不写就会被**静默丢掉**（这个坑踩过 4 次：voice / auto_read / pitch / idle ✗）
+        "voices": {},
         # 🌟 设置面板里的那几项也存这里 ✗ —— 不然后端一重启就打回默认 ✗
         "auto_read": True,
         "follow": True,
@@ -323,7 +329,15 @@ def build_router(runtime: Runtime) -> APIRouter:
             settings.default_voice = runtime.tts.resolve_voice_id(data["default_voice"])
             # ⚠️ 顺手存一份 ✗ —— 光改内存的话，后端一重启就回到默认音色 ✗
             #    （用户会看到"我在界面上选了要楽奈，说出来的却是晓晓 ✗"✗）
-            _save_ui({"voice": settings.default_voice})
+            # R26 · 方案 C：**记在"当前这个角色"名下** ✗ —— 这样切角色会跟着换 ✗，
+            # 而且以后每个角色各记各的 ✗。旧的全局键**继续写** ✗（还有地方在读它 ✗，
+            # 而且它是"没有角色时"的兜底 ✗）。
+            ui = _load_ui()
+            current = str(data.get("character") or ui.get("character") or "").strip()
+            voices = dict(ui.get("voices") or {})
+            if current:
+                voices[current] = settings.default_voice
+            _save_ui({"voice": settings.default_voice, "voices": voices})
         if isinstance(data.get("rate"), (int, float)):
             settings.rate = float(data["rate"])
         # 🌟 挂机自发生成（R16）
@@ -822,48 +836,92 @@ def build_router(runtime: Runtime) -> APIRouter:
                     "outfits": _list_outfits(Path(c.path)),
                 }
             )
+        ui = _load_ui()
+        active_character = ui.get("character")
         return {
             "characters": out,
             "active": out[0]["id"] if out else None,
             # 主窗选的（ui.json ✗）—— 角色窗口优先用它们 ✗
-            "active_character": _load_ui().get("character"),
-            "active_outfit": _load_ui().get("outfit"),
-            "show_avatar": bool(_load_ui().get("show_avatar", True)),
+            "active_character": active_character,
+            "active_outfit": ui.get("outfit"),
+            "show_avatar": bool(ui.get("show_avatar", True)),
+            # R26 · 方案 C：**这个角色**会用的音色（已经过三级优先级解析 ✗）。
+            # 前端切角色时拿它去刷音色下拉 ✗ —— 否则下拉显示的和真正发音的会对不上 ✗
+            # （以前音色是全局一个值 ✗ 所以没有这个问题 ✗）。
+            "active_voice": _avatar_voice(active_character),
         }
+
+    def _resolve_pack_voice(raw: str) -> str:
+        """把角色包里的 `voice:` 落成**能用的**音色 id。
+
+        ⚠️ 这里有个很坑的地方（R26 的 ③）：角色包里写的是 `voice: rana` ——
+        一个**没有后端前缀**的"音色包本地 id" ✗。
+        而 `TTSRegistry.resolve_voice_id` 看到没有前缀，会退到**后端默认值**
+        （`say` / `edge`）✗ —— 于是"角色包声明了音色"这件事
+        **看起来生效了、其实换成了完全另一个声音** ✗ ✗。
+
+        所以先在音色包里按本地 id 找 ✗：找到就用它的 `backend:id` ✅。
+        带前缀的（`rvc:rana`）原样放行 ✅。
+        """
+
+        raw = str(raw or "").strip()
+        if not raw or ":" in raw:
+            return raw
+        try:
+            for pack in load_packs().voices:
+                if pack.id == raw:
+                    return pack.full_id
+        except Exception:  # noqa: BLE001 - 查不到就原样交出去（让 registry 兜底）
+            pass
+        return raw
 
     def _avatar_voice(character_id: Optional[str]) -> str:
         """角色说话用哪个音色 ✗。
 
-        优先级（**用户明确选过的优先** ✗）：
+        优先级（R26 · 方案 C —— **每个角色记自己的** ✗）：
 
-        1. `ui.json` 里的 `voice` ✗ —— 主窗顶栏那个下拉选的就是它
-        2. **角色包自己声明的 `voice:`** ✗（以前它是个摆设 ✗，从没被用过 ✗）
-        3. 后端默认值 ✗
+        1. `ui.json` 的 `voices[<这个角色>]` ✗ —— 你**为这个角色**选过的
+        2. **角色包自己声明的 `voice:`** ✗ —— 角色的"出厂默认"✅（修好之后它真的生效 ✗）
+        3. `ui.json` 的 `voice` ✗ —— 旧版的**全局值**（升级前留下的，当兜底 ✗）
+        4. 后端默认值 ✗
 
-        ⚠️ 为什么要持久化第 1 条：早先主窗只是 `PUT /api/settings` ✗，
-        而那是**内存**里的值 ✗ —— 后端一重启就回到 "晓晓" ✗，
-        用户却明明在界面上选了要楽奈 ✗（"我从来没改过它 ✗"就是这么来的 ✗）。
+        ⚠️ 为什么第 1 条要**按角色**存（R26 的 ②）：以前是全局一个值 ✗，
+        于是给几个角色各配了音色之后，**切角色不跟着换** ✗，得手动去下拉里改 ✗。
+        ⚠️ 为什么第 1 条要**持久化**：早先只 `PUT /api/settings`（内存里的值 ✗），
+        后端一重启就回到默认音色 ✗ —— 用户明明在界面上选过要楽奈 ✗。
         """
 
-        ui_voice = str(_load_ui().get("voice") or "").strip()
-        if ui_voice:
-            return runtime.tts.resolve_voice_id(
-                ui_voice, fallback=runtime.settings.fallback_voice
-            )
+        ui = _load_ui()
+        cid = str(character_id or "").strip()
 
+        # ① 你为**这个角色**选过的 —— 用户明确选过的最优先
+        per_character = ui.get("voices")
+        if cid and isinstance(per_character, dict):
+            chosen = str(per_character.get(cid) or "").strip()
+            if chosen:
+                return runtime.tts.resolve_voice_id(
+                    chosen, fallback=runtime.settings.fallback_voice
+                )
+
+        # ② 角色包声明的"出厂默认"
         pack_voice = ""
-        if character_id:
+        if cid:
             try:
                 for pack in load_packs().characters:
-                    if pack.id == character_id:
-                        pack_voice = pack.voice or ""
+                    if pack.id == cid:
+                        pack_voice = _resolve_pack_voice(pack.voice or "")
                         break
             except Exception:  # noqa: BLE001
                 pass
 
+        # ③ 旧版的全局值（升级兜底）→ ④ 后端默认
+        fallback_choice = (
+            pack_voice
+            or str(ui.get("voice") or "").strip()
+            or runtime.settings.default_voice
+        )
         return runtime.tts.resolve_voice_id(
-            pack_voice or runtime.settings.default_voice,
-            fallback=runtime.settings.fallback_voice,
+            fallback_choice, fallback=runtime.settings.fallback_voice
         )
 
     # -- 角色语音（点一下角色时说一句 ✗）-----------------------------------

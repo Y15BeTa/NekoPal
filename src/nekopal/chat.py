@@ -599,6 +599,23 @@ def _legacy_lines_file(character_id: Optional[str]) -> Path:
     return config_dir() / "characters" / cid / "lines.json"
 
 
+def _drop_legacy_lines(character_id: Optional[str]) -> None:
+    """搬完就把老文件**删掉**。
+
+    ⚠️ 这里曾经踩过：`_migrate_legacy()` **只搬不删** ✗，而删除只写在 `clear_lines()` 里 ✗
+    → 于是老文件**永远留着**（一个 30 条的冻结副本），看起来像"台词有两个地方、
+    不知道哪个算数"✗ —— 其实代码里很清楚：**统一文件才算数**，
+    老文件是**没人读**的残留 ✗。
+
+    ⚠️ **必须在写入成功之后才删** ✗ —— 先删再写、而写又失败的话，就真丢台词了 ✗。
+    """
+
+    try:
+        _legacy_lines_file(character_id).unlink()
+    except Exception:  # noqa: BLE001 - 删不掉不该影响"读台词"这件事
+        pass
+
+
 def _read_pool_file() -> Dict[str, Any]:
     try:
         import yaml
@@ -682,11 +699,22 @@ def load_lines(character_id: Optional[str]) -> Dict[str, Any]:
         if migrated is None:
             return empty
         chars[cid] = migrated
+        persisted = False
         try:
             _write_pool_file(chars)
+            persisted = True
         except Exception:  # noqa: BLE001
             pass
+        # 搬成功才删老的 ✗（写失败就留着，下次还能再搬一次）
+        if persisted:
+            _drop_legacy_lines(character_id)
         entry = migrated
+    elif _legacy_lines_file(character_id).is_file():
+        # 统一文件里**已经有**它了 ✗ → 老位置那份就是**过时的残留** ✗
+        # （迁移当时漏删、或者迁移发生在"只搬不删"那版代码里 ✗）。
+        # ⚠️ 只在**统一文件里确实有条目**时才进来这里 ✗（上面 if/elif 保证了 ✗）
+        #    —— 绝不会把唯一一份台词删掉 ✗。
+        _drop_legacy_lines(character_id)
 
     lines = [str(x).strip() for x in (entry.get("lines") or []) if str(x).strip()]
     fp = str(entry.get("fingerprint") or "")
@@ -779,10 +807,7 @@ def clear_lines(character_id: Optional[str]) -> Dict[str, Any]:
         except Exception:  # noqa: BLE001
             pass
     # 老位置也顺手删掉（迁移过一次就别留着 ✗）
-    try:
-        _legacy_lines_file(character_id).unlink()
-    except Exception:  # noqa: BLE001
-        pass
+    _drop_legacy_lines(character_id)
     _BAGS.pop(cid, None)
     return load_lines(character_id)
 

@@ -950,6 +950,28 @@ function initSettingsPage() {
 initSettingsPage();
 
 
+// ── R26 · 方案 C：音色**每个角色各记各的** ─────────────────────────────
+// 后端已经把优先级解析好了（你为这个角色选的 → 角色包默认 → 旧全局 → 后端默认 ✗），
+// 这里只负责**把它显示出来** ✗ —— 不然"下拉显示的音色"和"真正发音的音色"会对不上 ✗
+// （以前音色是全局一个值 ✗ 所以不会有这个问题 ✗）。
+async function applyVoiceForCharacter() {
+  if (!els.voice) return;
+  try {
+    const info = await (await fetch('/api/avatar', { cache: 'no-store' })).json();
+    const wanted = info.active_voice;
+    if (!wanted || els.voice.value === wanted) return;
+    // 音色包可能刚被删掉 → 只有这个选项真在才改
+    const exists = Array.from(els.voice.options).some((o) => o.value === wanted);
+    if (!exists) return;
+    els.voice.value = wanted;
+    if (typeof syncVoiceLabel === 'function') syncVoiceLabel();
+    syncVoiceToServer(wanted);
+    setStatus('已切到这个角色自己的音色：' + (els.voice.selectedOptions[0]?.textContent || wanted));
+  } catch (err) {
+    // 拿不到就不动 —— 保持现在的选择总比清空好
+  }
+}
+
 // ── 人物形象：开关 + 角色下拉 + 换装下拉（两个窗口共享）────────────────
 // 和音色一样写进后端 /api/ui；角色窗口每 3 秒轮询 → 跟着换 / 自己退出。
 // ⚠️ 「6 套衣服」不是 6 个形象 ✗ —— 它们都属于同一个角色（要楽奈 ✗），
@@ -1026,6 +1048,10 @@ async function initAvatarPickers() {
   charSel.addEventListener('change', async () => {
     fillOutfits();
     await save();
+    // R26：切角色 → 跟着换成**这个角色自己的**音色 ✗
+    // ⚠️ 顺序很重要：先 `save()`（把新角色写进 ui.json ✗），
+    //    再刷音色 —— 否则后端会按**旧角色**去解析 ✗。
+    await applyVoiceForCharacter();
   });
   outfitSel.addEventListener('change', save);
 }

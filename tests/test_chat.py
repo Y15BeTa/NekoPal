@@ -273,3 +273,58 @@ def test_merge_lines_dedupes(cfg):
 def test_merge_lines_works_on_empty_pool(cfg):
     out = chat.merge_lines("rana", ["甲。"], "m")
     assert out["lines"] == ["甲。"]
+
+
+# ── ⑦ 老台词文件的残留（R26）─────────────────────────────────────────────
+#
+# `characters/<id>/lines.json` 是**迁移前**的老位置 ✗（代码注释写着"只用于一次性迁移"✗）。
+# 踩过的坑：`_migrate_legacy()` **只搬不删** ✗，而删除只写在 `clear_lines()` 里 ✗
+# → 老文件**永远留着** ✗ —— 看起来像"台词有两个地方、不知道哪个算数"✗，
+# 其实代码里很清楚：**统一文件才算数** ✗。
+
+
+def test_legacy_lines_file_is_cleaned_when_the_pool_already_has_it(cfg):
+    """统一文件里已经有这个角色时，**也要**把老位置的残留清掉。
+
+    （老代码只在"统一文件里没有"那一条分支里删 ✗ —— 而现实中
+    "迁移早就做过了"的情况反而更常见 ✗ 于是残留一直在 ✗。）
+    """
+
+    import json as _json
+
+    root = cfg / "nekopal"
+    (root / "characters/rana").mkdir(parents=True)
+    (root / "lines.yaml").write_text(
+        "characters:\n  rana:\n    lines:\n      - 新的\n      - 也有这个\n",
+        encoding="utf-8",
+    )
+    legacy = root / "characters/rana/lines.json"
+    legacy.write_text(_json.dumps({"lines": ["旧的"], "fingerprint": "x"}), encoding="utf-8")
+
+    got = chat.load_lines("rana")
+
+    assert got["lines"] == ["新的", "也有这个"]     # 统一文件说了算
+    assert not legacy.exists()                     # 残留清掉
+    # ⚠️ 清残留**绝不能**动到统一文件里的台词
+    import yaml
+
+    after = yaml.safe_load((root / "lines.yaml").read_text(encoding="utf-8"))
+    assert after["characters"]["rana"]["lines"] == ["新的", "也有这个"]
+
+
+def test_legacy_lines_are_migrated_when_the_pool_is_empty(cfg):
+    """统一文件里没有 → 去搬老文件；**搬完要删** ✗（不是只搬不删 ✗）。"""
+
+    import json as _json
+
+    root = cfg / "nekopal"
+    (root / "characters/rana").mkdir(parents=True)
+    legacy = root / "characters/rana/lines.json"
+    legacy.write_text(
+        _json.dumps({"lines": ["只有老的这一份"], "model": "m"}), encoding="utf-8"
+    )
+
+    got = chat.load_lines("rana")
+
+    assert got["lines"] == ["只有老的这一份"]
+    assert not legacy.exists()
