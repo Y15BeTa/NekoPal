@@ -39,6 +39,12 @@ uv venv ~/.local/share/nekopal/sovits-venv --python 3.11
 uv pip install --python ~/.local/share/nekopal/sovits-venv/bin/python \
     -r ~/.local/share/nekopal/sovits/requirements.txt
 
+# ②b ⚠️ 还要补两个 —— **上游 requirements.txt 里没有** ✗（原因见第七节）
+#     · torchcodec：新版 torchaudio（2.9+）删掉了内置解码器，而它钉的是旧版
+#     · resampy   ：新版 librosa 把它变成可选了，但 GPT-SoVITS 的代码路径要用
+uv pip install --python ~/.local/share/nekopal/sovits-venv/bin/python \
+    torchcodec resampy
+
 # ③ 基础模型（推理必需的三个；uvr5 人声分离用不到，不下）
 bash integrations/sovits/download_models.sh   # 见下方「下载了什么」
 ```
@@ -173,13 +179,46 @@ GPT-SoVITS 会**模仿你给的那段参考音频的语气**。所以：
 
 ---
 
-## 六、性能（Apple Silicon）
+## 六、性能（Apple Silicon · 实测）
 
-**待实测**（引擎装好后补上）。
+**2026-10-16 实测**（MacBook Air，`--device cpu`，`v2ProPlus`，同一句话
+「こんにちは。今日もいい天気ですね。」）：
 
-参考：GPT-SoVITS 在 CPU 上是**明显慢于实时**的（这也是为什么 R16 的
-"挂机自发生成"必须允许慢、不能当点击的即时反馈用）。
-`serve.py` 常驻 + NekoPal 的**预合成队列**能掩盖掉绝大部分等待。
+| | **GPT-SoVITS（律）** | **RVC 变声（要楽奈）** |
+| --- | --- | --- |
+| 采样率 | 32 kHz | 48 kHz |
+| 音频长度 | 2.58 s | 2.14 s |
+| 端到端耗时 | **1.96 s** | 10.75 s |
+| **RTF** | **0.76** ✅ | 5.02 |
+
+**⇒ 意外结论：GPT-SoVITS 比原来那条变声链还快 5 倍多** ✅
+（RVC 那边慢在**固定开销**：edge-tts 联网 + 变声服务 + 每句的调度 ✗；
+短句时这段开销占比极大 ✗。）
+
+引擎本身：**加载约 1.4~3.6 秒**（BERT + CNHuBERT ✗ 只加载一次 ✗），
+**切音色 0.1~0.9 秒**（GPT 0.1s / SoVITS 0.8s ✗ 同一音色连读时**完全不切** ✗）。
+
+> ⚠️ 注意 GPT-SoVITS **不产出词级时间戳** ✗（`capabilities().word_timings = False` ✗）
+> → 跟读高亮会自动降级成**句级** ✗ 口型走**音量**模式 ✗。这是接口决定的 ✗ 不是 bug ✗。
 
 > ⚠️ Apple Silicon 上先别急着上 `--device mps`：MPS 对 GPT-SoVITS 的算子覆盖不全，
-> 可能报错或出怪声。**先用 `cpu` 跑通**，再拿 A/B 比。
+> 可能报错或出怪声。**先用 `cpu` 跑通**（实测已比实时快 ✗），再拿 A/B 比。
+
+---
+
+## 七、装引擎时踩到的坑（2026-10-16 实录）
+
+除了上面「三个坑」，还有**四个**——都不在 GPT-SoVITS 的 `requirements.txt` 里，
+所以第 ① 次装必然踩：
+
+| # | 现象 | 真因 | 修法 |
+| --- | --- | --- | --- |
+| ④ | `FileNotFoundError: 'GPT_SoVITS/pretrained_models/s1v3.ckpt'` —— **文件明明在** ✗ | GPT-SoVITS 的 `TTS_Config.default_configs` 里那些权重路径是**相对路径** ✗，它按 **CWD** 找 ✗ | **把工作目录切到引擎根目录**（`serve.py` 里 `os.chdir(engine_dir)` ✗）。官方 `webui.py` 也是在仓库根目录跑的 ✗ |
+| ⑤ | `ImportError: TorchCodec is required for load_with_torchcodec` | **新版 torchaudio（2.9+）删掉了内置解码器** ✗，而 GPT-SoVITS 钉的是旧版 ✗ —— 我们 `uv` 装出来的是新版 ✗ | `uv pip install torchcodec`（本机需要 ffmpeg ✗ 已有 ✅）|
+| ⑥ | `ModuleNotFoundError: No module named 'resampy'` | 新版 **librosa 把 `resampy` 变成可选** ✗，但 GPT-SoVITS 的代码路径要用 ✗ | `uv pip install resampy` |
+| ⑦ | 日语读出来是乱的 / 报词典缺失 | `pyopenjtalk` **不自带**那个词典 ✗（默认目录根本不存在 ✗）| 下 `open_jtalk_dic_utf_8-1.11.tar.gz` 解到 **`pyopenjtalk` 包自己的目录**里 ✗（`download_models.sh` 会做 ✗）|
+
+> 📌 **教训**：上游 `requirements.txt` **没有锁版本** ✗ ——
+> 于是"装出来的 torch/torchaudio/librosa 比它写代码时新" ✗，
+> 就会冒出它从没遇到过的**新破坏性变更** ✗。
+> 遇到这类 `ImportError` / `ModuleNotFoundError`，**先想"我装的版本是不是比它新"** ✗。

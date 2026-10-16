@@ -76,6 +76,17 @@ def ensure_engine(engine_dir: Path, device: str, version: str, is_half: bool):
     if _STATE["engine"] is not None and _STATE["config_key"] == key:
         return _STATE["engine"]
 
+    # ⚠️ **必须把工作目录切到引擎根目录** ✗
+    # GPT-SoVITS 的 `TTS_Config.default_configs` 里那些权重路径**是相对路径** ✗
+    # （如 `GPT_SoVITS/pretrained_models/s1v3.ckpt` ✗），它是按 **CWD** 去找的 ✗。
+    # 不在引擎目录下启动就会报：
+    #     FileNotFoundError: 'GPT_SoVITS/pretrained_models/s1v3.ckpt'
+    # （踩过 ✗ —— 而那个文件明明在 ✗，让人以为是模型没下全 ✗）。
+    # 官方 `webui.py` 也是在仓库根目录跑的 ✗。顺带 `__init__` 里的
+    # `os.makedirs("GPT_SoVITS/configs/")` 也会落在该落的地方 ✗。
+    # 传进来的 `ref_audio` / 权重路径都是**绝对路径** ✗，所以切目录不影响它们 ✗。
+    os.chdir(engine_dir)
+
     _setup_paths(engine_dir)
 
     pretrained = engine_dir / "GPT_SoVITS/pretrained_models"
