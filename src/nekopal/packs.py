@@ -69,6 +69,13 @@ class VoicePack:
     ref_audio: Optional[str] = None
     prompt_text: Optional[str] = None
     prompt_lang: Optional[str] = None
+    #: 仅 backend == "sovits"：
+    #: 交付包常常是**每个角色一套训练好的权重**（GPT + SoVITS 两个文件）。
+    #: 不写就表示"用服务端当前加载的那套"（零样本克隆就是这样用的）。
+    sovits_gpt_weights: Optional[str] = None
+    sovits_weights: Optional[str] = None
+    #: 要合成**文本**的语言，默认跟着 `prompt_lang`
+    sovits_text_lang: Optional[str] = None
     weights: Optional[str] = None
     backend_voice: Optional[str] = None
     #: 仅 backend == "rvc"（变声）时使用
@@ -321,6 +328,8 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
     resolved_model = None
     resolved_index = None
     rvc_rate = None
+    resolved_gpt = None
+    resolved_sovits = None
 
     if backend == "sovits":
         ref = _resolve(folder, section.get("ref_audio"))
@@ -328,6 +337,20 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
             reasons.append("sovits 音色需要在 `{}` 段里给出 `ref_audio`".format(backend))
         elif not ref.is_file():
             reasons.append("参考音频不存在：{}".format(ref))
+        # 参考音频的**逐字文本**与语言是必填的 —— 少一个，服务端只能瞎猜，
+        # 出来的音会"飘"（这是 GPT-SoVITS 最常见的踩坑），所以在加载期就拦下
+        if not str(section.get("prompt_text") or "").strip():
+            reasons.append("sovits 音色需要在 `sovits` 段里给出 `prompt_text`（参考音频的逐字文本）")
+        if not str(section.get("prompt_lang") or "").strip():
+            reasons.append("sovits 音色需要在 `sovits` 段里给出 `prompt_lang`（如 all_ja / zh / en）")
+        # 可选：每个角色一套**训练好的权重**（交付包就是这种形态）。
+        # 写了就必须存在 —— 路径写错却"看起来加载成功"是最难查的一类问题。
+        for key, label in (("gpt_weights", "GPT 权重"), ("sovits_weights", "SoVITS 权重")):
+            resolved = _resolve(folder, section.get(key))
+            if resolved is not None and not resolved.is_file():
+                reasons.append("{}不存在：{}".format(label, resolved))
+        resolved_gpt = str(_resolve(folder, section.get("gpt_weights")) or "") or None
+        resolved_sovits = str(_resolve(folder, section.get("sovits_weights")) or "") or None
 
     if backend == "rvc":
         section = data.get("rvc") or {}
@@ -372,6 +395,9 @@ def _load_voice(spec: Path, folder: Path, known_backends: Optional[set]) -> Voic
         ref_audio=str(section.get("ref_audio") or "") or None,
         prompt_text=section.get("prompt_text"),
         prompt_lang=section.get("prompt_lang"),
+        sovits_gpt_weights=resolved_gpt,
+        sovits_weights=resolved_sovits,
+        sovits_text_lang=section.get("text_lang"),
         weights=str(section.get("weights") or "") or None,
         backend_voice=section.get("voice"),
         base_voice=base_voice,
@@ -431,9 +457,16 @@ description: "由本人录音克隆"
 
 # 下面只填所用后端需要的字段
 sovits:
+  # ① 零样本克隆只需要这三行：一段参考音频 + 它的逐字文本 + 语言
   ref_audio: ref.wav            # 3~10 秒参考音频，放本目录下
   prompt_text: "参考音频对应逐字文本"
-  prompt_lang: zh
+  prompt_lang: zh               # all_ja / zh / en / all_zh / all_ja ...
+
+  # ② 有"每个角色一套训练好的权重"（GPT-SoVITS 交付包就是这种）就再写这两行；
+  #    不写 = 用服务端当前加载的那套。路径可以相对本目录，也可以写绝对路径。
+  # gpt_weights: 模型/xxx_GPT_e8.ckpt
+  # sovits_weights: 模型/xxx_SoVITS_e8.pth
+  # text_lang: all_ja           # 要合成的**文本**语言，默认跟着 prompt_lang
 
 # edge:
 #   voice: zh-CN-XiaoxiaoNeural

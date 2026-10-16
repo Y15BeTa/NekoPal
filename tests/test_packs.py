@@ -107,7 +107,11 @@ def test_voice_pack_rejects_unknown_backend(tmp_path):
 def test_sovits_requires_existing_ref_audio(tmp_path):
     folder = write_pack(
         tmp_path, "cloned", "voice",
-        voice_data(id="cloned", backend="sovits", sovits={"ref_audio": "ref.wav", "prompt_text": "你好"}),
+        voice_data(
+            id="cloned",
+            backend="sovits",
+            sovits={"ref_audio": "ref.wav", "prompt_text": "你好", "prompt_lang": "zh"},
+        ),
     )
     collection = load(voices_dir=tmp_path, backends=("say", "edge", "sovits"))
     assert collection.voices == []
@@ -117,6 +121,78 @@ def test_sovits_requires_existing_ref_audio(tmp_path):
     collection = load(voices_dir=tmp_path, backends=("say", "edge", "sovits"))
     assert len(collection.voices) == 1
     assert collection.voices[0].backend == "sovits"
+
+
+def test_sovits_requires_prompt_text_and_lang(tmp_path):
+    """参考音频的**逐字文本**与语言必须写 —— 少一个，服务端只能瞎猜，出来的音会飘。
+
+    这两个字段在加载期就拦，比"合成出来不对再去查"便宜得多。
+    """
+
+    # ① 少了 prompt_text
+    write_pack(
+        tmp_path, "cloned", "voice",
+        voice_data(
+            id="cloned", backend="sovits",
+            sovits={"ref_audio": "ref.wav", "prompt_lang": "zh"},
+        ),
+    )
+    (tmp_path / "cloned" / "ref.wav").write_bytes(b"RIFF....")
+    collection = load(voices_dir=tmp_path, backends=("sovits",))
+    assert collection.voices == []
+    assert "prompt_text" in collection.problems[0].reason
+
+    # ② 少了 prompt_lang
+    write_pack(
+        tmp_path, "cloned", "voice",
+        voice_data(
+            id="cloned", backend="sovits",
+            sovits={"ref_audio": "ref.wav", "prompt_text": "你好"},
+        ),
+    )
+    collection = load(voices_dir=tmp_path, backends=("sovits",))
+    assert collection.voices == []
+    assert "prompt_lang" in collection.problems[0].reason
+
+
+def test_sovits_per_character_weights(tmp_path):
+    """交付包搞法：**每个角色一套训练好的权重**（GPT + SoVITS 两个文件）。
+
+    · 路径写成相对包目录 → 加载后应落成**绝对路径**（服务端要绝对路径）
+    · 写了但文件不存在 → **加载期就报错**（路径写错却"看起来成功"最难查）
+    """
+
+    write_pack(
+        tmp_path, "ritsu", "voice",
+        voice_data(
+            id="ritsu", backend="sovits",
+            sovits={
+                "ref_audio": "ref.wav", "prompt_text": "おはよう", "prompt_lang": "all_ja",
+                "text_lang": "all_ja",
+                "gpt_weights": "w/ritsu_GPT_e8.ckpt",
+                "sovits_weights": "w/ritsu_SoVITS_e8.pth",
+            },
+        ),
+    )
+    folder = tmp_path / "ritsu"
+    (folder / "ref.wav").write_bytes(b"RIFF....")
+
+    # 权重还没放 → 报错，而且要说清是哪一个
+    collection = load(voices_dir=tmp_path, backends=("sovits",))
+    assert collection.voices == []
+    assert "GPT 权重不存在" in collection.problems[0].reason
+
+    # 放上 → 加载成功，且路径是**绝对**的
+    (folder / "w").mkdir()
+    (folder / "w" / "ritsu_GPT_e8.ckpt").write_bytes(b"x")
+    (folder / "w" / "ritsu_SoVITS_e8.pth").write_bytes(b"x")
+    collection = load(voices_dir=tmp_path, backends=("sovits",))
+    assert len(collection.voices) == 1, collection.problems
+    pack = collection.voices[0]
+    assert pack.sovits_gpt_weights == str(folder / "w" / "ritsu_GPT_e8.ckpt")
+    assert pack.sovits_weights == str(folder / "w" / "ritsu_SoVITS_e8.pth")
+    assert pack.sovits_text_lang == "all_ja"
+    assert pack.full_id == "sovits:ritsu"
 
 
 def test_rvc_pack_requires_base_voice_and_model(tmp_path):

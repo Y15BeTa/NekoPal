@@ -127,14 +127,18 @@ def build_registry(settings=None) -> TTSRegistry:
     """内置后端。
 
     ``say`` / ``edge`` 是 ``official`` 授权等级，符合 G10「默认即合法」（设计文档 4.7）；
-    ``rvc`` 是**变声**后端 —— 它自己不带音色，只服务用户自备的变声模型。
+    ``rvc`` 是**变声**后端 —— 它自己不带音色，只服务用户自备的变声模型；
+    ``sovits`` 是**端到端**后端（文字 → 目标音色）—— 同理，只服务用户自备的权重。
     """
 
     from nekopal.config import load_settings
     from nekopal.tts.rvc import RvcBackend
+    from nekopal.tts.sovits import SovitsBackend
 
+    settings = settings or load_settings()
     registry = TTSRegistry()
     registry.register(SayBackend())
     registry.register(EdgeBackend())
-    registry.register(RvcBackend(settings or load_settings()))
+    registry.register(RvcBackend(settings))
+    registry.register(SovitsBackend(settings))
     return registry

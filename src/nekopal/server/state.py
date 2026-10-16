@@ -55,6 +55,10 @@ class Runtime:
         if rvc is not None and hasattr(rvc, "attach"):
             # pack_source 让 rvc 知道"命令也可能写在音色包里"，否则会误判后端不可用
             rvc.attach(runtime.tts, runtime.find_voice_pack, runtime.load_packs)
+        # GPT-SoVITS 后端只需要「音色包查询」（拿权重与参考音频的路径）
+        sovits = runtime.tts.get("sovits")
+        if sovits is not None and hasattr(sovits, "attach"):
+            sovits.attach(runtime.tts, runtime.find_voice_pack, runtime.load_packs)
         return runtime
 
     def find_voice_pack(self, voice_id: str):

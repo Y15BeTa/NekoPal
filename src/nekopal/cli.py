@@ -130,6 +130,9 @@ def attach_voice_packs(registry) -> int:
     rvc = registry.get("rvc")
     if rvc is not None and hasattr(rvc, "attach"):
         rvc.attach(registry, find, lambda: collection)
+    sovits = registry.get("sovits")
+    if sovits is not None and hasattr(sovits, "attach"):
+        sovits.attach(registry, find, lambda: collection)
     return len(collection.voices)
 
 

@@ -119,6 +119,11 @@ class Settings:
     rvc_command: List[str] = field(default_factory=list)
     rvc_timeout: float = 600.0
 
+    #: GPT-SoVITS 本地推理服务（"文字 → 声音"，自带权重 + 参考音频）。
+    #: 默认是 GPT-SoVITS 官方 `api_v2.py` 的默认端口；指到哪就用哪。
+    sovits_endpoint: str = "http://127.0.0.1:9880"
+    sovits_timeout: float = 300.0
+
     web_dir: Optional[Path] = field(default_factory=default_web_dir)
 
     def to_dict(self) -> dict:
@@ -148,6 +153,8 @@ class Settings:
             "export_format": self.export_format,
             "rvc_command": " ".join(self.rvc_command),
             "rvc_timeout": self.rvc_timeout,
+            "sovits_endpoint": self.sovits_endpoint,
+            "sovits_timeout": self.sovits_timeout,
         }
 
 
@@ -181,6 +188,9 @@ def load_settings() -> Settings:
     if raw_rvc:
         s.rvc_command = shlex.split(raw_rvc)
     s.rvc_timeout = _env_float("NEKOPAL_RVC_TIMEOUT", s.rvc_timeout)
+
+    s.sovits_endpoint = _env("NEKOPAL_SOVITS_ENDPOINT", s.sovits_endpoint).strip()
+    s.sovits_timeout = _env_float("NEKOPAL_SOVITS_TIMEOUT", s.sovits_timeout)
 
     web = os.environ.get("NEKOPAL_WEB_DIR")
     if web:
